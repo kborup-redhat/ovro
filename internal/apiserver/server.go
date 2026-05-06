@@ -23,6 +23,7 @@ type Server struct {
 	TokenManager      *approval.TokenManager
 	Notifier          *notifier.Dispatcher
 	ApprovalRouteHost string // e.g., "ovro-approval.apps.cluster.example.com"
+	DemoMode          bool
 	mux               *http.ServeMux
 }
 
@@ -61,6 +62,11 @@ func WithNotifier(d *notifier.Dispatcher) ServerOption {
 // WithApprovalRouteHost sets the external hostname for approval URLs.
 func WithApprovalRouteHost(host string) ServerOption {
 	return func(s *Server) { s.ApprovalRouteHost = host }
+}
+
+// WithDemoMode enables demo mode for the API server.
+func WithDemoMode(enabled bool) ServerOption {
+	return func(s *Server) { s.DemoMode = enabled }
 }
 
 func (s *Server) registerRoutes() {

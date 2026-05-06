@@ -5,57 +5,57 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
-// SlackForwarder sends notifications to Slack via webhook
 type SlackForwarder struct {
-	webhookURL string
-	channel    string
+	botToken        string
+	fallbackChannel string
 }
 
-// NewSlackForwarder creates a new Slack forwarder
 func NewSlackForwarder(ctx context.Context, cfg ForwarderConfig, secretGetter SecretGetter) (*SlackForwarder, error) {
 	if cfg.SecretRef == "" {
 		return nil, fmt.Errorf("slack forwarder requires secretRef")
 	}
 
-	// Extract namespace from secretRef (format: namespace/name)
-	namespace := "default"
-	secretName := cfg.SecretRef
-	// Simple parsing - in production, this could be more sophisticated
-
-	secretData, err := secretGetter.GetSecretData(ctx, secretName, namespace)
+	namespace := "ovro-system"
+	secretData, err := secretGetter.GetSecretData(ctx, cfg.SecretRef, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret: %w", err)
 	}
 
-	webhookURL, ok := secretData["webhookUrl"]
+	botToken, ok := secretData["botToken"]
 	if !ok {
-		return nil, fmt.Errorf("secret missing webhookUrl key")
+		return nil, fmt.Errorf("secret missing botToken key")
 	}
 
 	return &SlackForwarder{
-		webhookURL: string(webhookURL),
-		channel:    cfg.Channel,
+		botToken:        string(botToken),
+		fallbackChannel: cfg.Channel,
 	}, nil
 }
 
-// Name returns the forwarder name
 func (s *SlackForwarder) Name() string {
 	return "slack"
 }
 
-// Send sends a notification to Slack
 func (s *SlackForwarder) Send(ctx context.Context, n *Notification) error {
+	channel, err := s.resolveChannel(ctx, n.Owner)
+	if err != nil {
+		return fmt.Errorf("resolving slack channel for owner %q: %w", n.Owner, err)
+	}
+
 	message := fmt.Sprintf(
 		"*VM Rightsizing Recommendation*\n\n"+
 			"*VM:* %s\n"+
 			"*Namespace:* %s\n"+
 			"*Owner:* %s\n"+
 			"*Direction:* %s\n"+
-			"*Current:* %d CPU, %d MB Memory\n"+
-			"*Recommended:* %d CPU, %d MB Memory\n\n"+
+			"*Current:* %d CPU, %d GiB Memory\n"+
+			"*Recommended:* %d CPU, %d GiB Memory\n\n"+
 			"<%s|Approve/Reject>",
 		n.VMName, n.Namespace, n.Owner, n.Direction,
 		n.CurrentCPU, n.CurrentMemory,
@@ -64,33 +64,100 @@ func (s *SlackForwarder) Send(ctx context.Context, n *Notification) error {
 	)
 
 	payload := map[string]interface{}{
-		"text": message,
-	}
-
-	if s.channel != "" {
-		payload["channel"] = s.channel
+		"channel": channel,
+		"text":    message,
 	}
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		return fmt.Errorf("marshalling payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.webhookURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/chat.postMessage", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.botToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parsing slack response: %w", err)
+	}
+	if !result.OK {
+		return fmt.Errorf("slack API error: %s", result.Error)
 	}
 
 	return nil
+}
+
+// resolveChannel determines where to send the message.
+// If the owner looks like a channel (starts with # or C), use it directly.
+// If it looks like an email, look up the Slack user and open a DM.
+// Falls back to the configured fallbackChannel.
+func (s *SlackForwarder) resolveChannel(ctx context.Context, owner string) (string, error) {
+	if strings.HasPrefix(owner, "#") || strings.HasPrefix(owner, "C") {
+		return owner, nil
+	}
+
+	if strings.Contains(owner, "@") {
+		// Try the username part (before @) first — matches Slack handles in many orgs
+		username := owner[:strings.Index(owner, "@")]
+		userID, err := s.lookupUserByEmail(ctx, username)
+		if err == nil && userID != "" {
+			return userID, nil
+		}
+		// Fall back to full email lookup
+		userID, err = s.lookupUserByEmail(ctx, owner)
+		if err == nil && userID != "" {
+			return userID, nil
+		}
+	}
+
+	if s.fallbackChannel != "" {
+		return s.fallbackChannel, nil
+	}
+
+	return "", fmt.Errorf("no channel resolved: owner %q is not a channel or known email, and no fallback channel configured", owner)
+}
+
+func (s *SlackForwarder) lookupUserByEmail(ctx context.Context, email string) (string, error) {
+	reqURL := "https://slack.com/api/users.lookupByEmail?email=" + url.QueryEscape(email)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.botToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var result struct {
+		OK   bool `json:"ok"`
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	if !result.OK {
+		return "", fmt.Errorf("users.lookupByEmail: %s", result.Error)
+	}
+	return result.User.ID, nil
 }

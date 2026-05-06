@@ -49,6 +49,7 @@ export interface ApplyResult {
   awaitingApproval: boolean;
   owner?: string;
   message?: string;
+  approvalUrl?: string;
   recommendation?: RightsizingRecommendation;
 }
 
@@ -69,7 +70,7 @@ export async function applyRecommendation(
   }
   const data = await response.json();
   if (response.status === 202) {
-    return { awaitingApproval: true, owner: data.owner, message: data.message };
+    return { awaitingApproval: true, owner: data.owner, message: data.message, approvalUrl: data.approvalUrl };
   }
   return { awaitingApproval: false, recommendation: data };
 }

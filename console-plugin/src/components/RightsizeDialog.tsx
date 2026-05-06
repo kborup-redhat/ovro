@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import {
   Alert,
   Button,
+  ClipboardCopy,
+  ClipboardCopyVariant,
   Modal,
   ModalVariant,
   Radio,
@@ -27,6 +29,7 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
   const [error, setError] = useState<string | null>(null);
   const [awaitingApproval, setAwaitingApproval] = useState(false);
   const [approvalOwner, setApprovalOwner] = useState('');
+  const [approvalUrl, setApprovalUrl] = useState('');
 
   const rec = recommendation;
   const isHotplug = rec.spec.hotplugCapable;
@@ -50,6 +53,7 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
       if (result.awaitingApproval) {
         setAwaitingApproval(true);
         setApprovalOwner(result.owner || '');
+        setApprovalUrl(result.approvalUrl || '');
       } else {
         onApplied();
         onClose();
@@ -82,6 +86,17 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
                 Notification sent to {approvalOwner}. The owner will review and approve the rightsizing changes.
               </Alert>
             </StackItem>
+            {approvalUrl && (
+              <StackItem>
+                <strong>Approval URL:</strong>
+                <ClipboardCopy isReadOnly hoverTip="Copy" clickTip="Copied" variant={ClipboardCopyVariant.expansion}>
+                  {approvalUrl}
+                </ClipboardCopy>
+                <Button variant="link" component="a" href={approvalUrl} target="_blank" rel="noopener noreferrer" style={{ paddingLeft: 0, marginTop: '0.5rem' }}>
+                  Open approval page
+                </Button>
+              </StackItem>
+            )}
             <StackItem>
               <Button variant="primary" onClick={() => { onApplied(); onClose(); }}>Close</Button>
             </StackItem>

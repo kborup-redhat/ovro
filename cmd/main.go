@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"flag"
 	"log/slog"
@@ -369,6 +370,26 @@ func main() {
 
 	// Initialize approval workflow components (optional — skipped if not configured)
 	var serverOpts []apiserver.ServerOption
+
+	if demoMode {
+		serverOpts = append(serverOpts, apiserver.WithDemoMode(true))
+	}
+
+	// In demo mode, auto-generate a signing key if none is provided
+	if demoMode && signingKeyPath == "" {
+		demoKey := make([]byte, 32)
+		if _, err := rand.Read(demoKey); err != nil {
+			setupLog.Error(err, "failed to generate demo signing key")
+			os.Exit(1)
+		}
+		tokenMgr := approval.NewTokenManager(demoKey)
+		serverOpts = append(serverOpts, apiserver.WithTokenManager(tokenMgr))
+		if approvalRouteHost == "" {
+			approvalRouteHost = "localhost:8443"
+		}
+		serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
+		setupLog.Info("Demo mode: auto-generated signing key for approval tokens")
+	}
 
 	if signingKeyPath != "" {
 		signingKey, err := os.ReadFile(signingKeyPath)

@@ -8,20 +8,31 @@ metadata:
 data:
   config.yaml: |
     forwarders:
+      # Slack: sends DM to owner (looked up by email) or to a channel.
+      # If the owner label is an email, the bot looks up the user and DMs them.
+      # If the owner label starts with # or C, it posts to that channel.
+      # The channel field below is only used as a fallback if owner lookup fails.
       - type: slack
         enabled: false
         channel: "#vm-rightsizing"
-        secretRef: ovro-slack-credentials
+        secretRef: ovro-slack-credentials    # requires: botToken (xoxb-...)
+      # Teams: sends DM to owner via Microsoft Graph API.
+      # If the owner label is an email, the bot looks up the user and DMs them
+      # (tries username part first, then full email).
+      # The channel field is a webhook URL used as fallback if user lookup fails.
       - type: teams
         enabled: false
-        secretRef: ovro-teams-credentials
+        channel: ""                          # optional webhook URL for fallback
+        secretRef: ovro-teams-credentials    # requires: tenantId, clientId, clientSecret
       - type: smtp
         enabled: false
         from: "ovro-noreply@example.com"
-        to: "{{owner}}"
+        to: "{{owner}}"                     # {{owner}} is replaced with the owner label value
         smtpServer: "smtp.example.com"
-        smtpPort: 587
-        secretRef: ovro-smtp-credentials
+        smtpPort: 587                        # 587 for STARTTLS, 465 for implicit TLS, 25 for plain
+        smtpTLS: "starttls"                  # "starttls" (default), "tls" (implicit), or "none"
+        smtpTLSSkipVerify: false             # set true to skip certificate verification
+        secretRef: ovro-smtp-credentials     # requires: username, password
       - type: snmp
         enabled: false
         host: "snmp-trap-receiver.example.com"

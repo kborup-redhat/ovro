@@ -1,6 +1,6 @@
 # OVRO — OpenShift Virtualization Rightsizing Operator
 
-OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShift, generates rightsizing recommendations, and lets cluster administrators apply or revert changes through an OpenShift Console dynamic plugin.
+OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShift, generates rightsizing recommendations, and lets cluster administrators apply or revert changes through an OpenShift Console dynamic plugin. It includes an optional approval workflow that routes changes through VM owners before applying, with notifications via Slack, Teams, email, and other channels.
 
 ## Features
 
@@ -8,9 +8,12 @@ OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShi
 - **Rightsizing calculator** — recommends downsize or upsize with configurable headroom, minimum-savings thresholds, and percentile tuning.
 - **Hotplug-aware** — detects live CPU/memory hotplug capability; applies changes without restart when possible.
 - **Console plugin** — browse recommendations, apply/revert changes, exclude VMs, and view cluster-wide savings from the OpenShift Console.
+- **Approval workflow** — when a VM has an owner label, changes require owner approval via a signed token link before being applied.
+- **Multi-channel notifications** — notify VM owners via Slack, Microsoft Teams, SMTP email, SNMP traps, PagerDuty, Rocket.Chat, or ServiceNow.
 - **RBAC-enforced** — every API call is scoped to the namespaces the requesting user can access via TokenReview and SubjectAccessReview.
 - **Scheduled restarts** — for non-hotplug VMs, schedule a restart window or trigger it immediately.
 - **Policy-driven** — a cluster-scoped `RightsizingPolicy` CR controls lookback, percentile, headroom, thresholds, and reconcile interval.
+- **Demo mode** — generate synthetic recommendations for all VMs without real Prometheus data, useful for demos and testing.
 
 ## Architecture
 
@@ -18,64 +21,381 @@ OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShi
 |-----------|-------------|
 | **Recommendation controller** | Watches `VirtualMachine` objects, queries Prometheus, runs the calculator, and creates/updates `RightsizingRecommendation` CRs. |
 | **Restart controller** | Watches recommendations in `applied-pending-restart` state and triggers VM restarts at the scheduled time. |
-| **REST API server** | Serves the console plugin with filtered, RBAC-scoped data. Runs as a manager-managed runnable. |
-| **Console plugin** | React/TypeScript OpenShift dynamic plugin using PatternFly. |
+| **REST API server** | Serves the console plugin with filtered, RBAC-scoped data. Handles apply, revert, exclude, and approval operations. |
+| **Console plugin** | React/TypeScript OpenShift dynamic plugin using PatternFly 5. |
+| **Approval proxy** | Standalone container that validates JWT tokens and serves the owner approval page. Exposed via an OpenShift Route. |
+
+### Approval Workflow
+
+```
+Admin clicks "Rightsize" on VM with owner label
+  -> Backend sets state to "awaiting-approval"
+  -> Backend sends notification via configured forwarders (Slack, email, etc.)
+  -> Notification includes signed approval link
+  -> Owner clicks link -> hits approval proxy (via Route)
+  -> Proxy validates JWT -> serves approval page
+  -> Owner approves/rejects -> proxy forwards to backend
+  -> Backend applies or rejects the recommendation
+```
+
+Approval tokens expire after 14 days. A reminder notification is sent at 7 days (except to ServiceNow, since the ticket already exists).
 
 ## Prerequisites
 
-- OpenShift 4.14+
-- OpenShift Virtualization (KubeVirt) installed
-- Prometheus / Thanos Querier available in-cluster
-- `oc` CLI
+- OpenShift 4.14+ (tested on 4.18)
+- OpenShift Virtualization (KubeVirt) installed with running VMs
+- Prometheus / Thanos Querier available in-cluster (default: `https://thanos-querier.openshift-monitoring.svc:9091`)
+- `oc` CLI logged in as cluster-admin
+- A container image registry accessible from the cluster (e.g., the internal OpenShift registry or Quay)
 
-## Quick Start
+## Installation
+
+### 1. Create the namespace
 
 ```bash
-# Install CRDs
-make install
-
-# Deploy (uses internal registry by default)
-make deploy IMG=image-registry.openshift-image-registry.svc:5000/ovro-system/ovro:latest
-
-# Apply a default policy
-oc apply -f config/samples/
+oc apply -f deploy/namespace.yaml
 ```
 
-## Building
+This creates the `ovro-system` namespace where all OVRO components run.
+
+### 2. Install CRDs
 
 ```bash
-# Backend
-make build
+oc apply -f config/crd/bases/rightsizing.redhatconsulting.io_rightsizingrecommendations.yaml
+oc apply -f config/crd/bases/rightsizing.redhatconsulting.io_rightsizingpolicies.yaml
+```
+
+### 3. Set up RBAC
+
+```bash
+oc apply -f config/rbac/service_account.yaml
+oc apply -f config/rbac/role.yaml
+oc apply -f config/rbac/role_binding.yaml
+oc apply -f config/rbac/leader_election_role.yaml
+oc apply -f config/rbac/leader_election_role_binding.yaml
+```
+
+### 4. Build and push container images
+
+OVRO consists of three container images. Replace `<REGISTRY>` with your registry (e.g., `quay.io/yourorg` or `image-registry.openshift-image-registry.svc:5000/ovro-system`).
+
+```bash
+export REGISTRY=<REGISTRY>
+export TAG=latest
+
+# Backend (operator + API server)
+podman build -f Dockerfile.backend -t ${REGISTRY}/ovro-backend:${TAG} .
+podman push ${REGISTRY}/ovro-backend:${TAG}
 
 # Console plugin
-cd console-plugin && npm ci && npm run build
+cd console-plugin
+podman build -t ${REGISTRY}/ovro-console-plugin:${TAG} .
+podman push ${REGISTRY}/ovro-console-plugin:${TAG}
+cd ..
 
-# Container images
-make docker-build IMG=<registry>/ovro:<tag>
-cd console-plugin && podman build -t <registry>/ovro-console-plugin:<tag> .
+# Approval proxy (optional — only needed if using the approval workflow)
+podman build -f Dockerfile.approval-proxy -t ${REGISTRY}/ovro-approval-proxy:${TAG} .
+podman push ${REGISTRY}/ovro-approval-proxy:${TAG}
 ```
 
-## Testing
+### 5. Deploy the backend
+
+Edit `config/manager/manager.yaml` and set the container image to your registry path, then apply:
 
 ```bash
-# Go unit tests
-make test
-
-# Console plugin tests
-cd console-plugin && npm test
-
-# Lint
-go vet ./...
-cd console-plugin && npx eslint src/
+oc apply -f config/manager/manager.yaml
+oc apply -f deploy/backend-service.yaml
 ```
 
-## CI/CD
+The backend starts listening on port 8443 with TLS certificates auto-generated by the OpenShift service-ca operator (via the `service.beta.openshift.io/serving-cert-secret-name` annotation on the Service).
 
-A Tekton pipeline (`tekton/pipeline.yaml`) runs on every push via a GitHub webhook EventListener. It lints, tests, builds both container images, and deploys to the target namespace.
+### 6. Deploy the console plugin
 
-## Configuration
+Edit `deploy/console-plugin-deployment.yaml` and update the image reference to your registry, then apply:
 
-The `RightsizingPolicy` CR controls the operator behaviour:
+```bash
+oc apply -f deploy/console-plugin-deployment.yaml
+oc apply -f deploy/consoleplugin.yaml
+```
+
+Enable the plugin in the OpenShift Console:
+
+```bash
+oc patch console.operator.openshift.io cluster \
+  --type=merge \
+  --patch='{"spec":{"plugins":["ovro-console-plugin"]}}'
+```
+
+Refresh the OpenShift Console. The **Rightsizing** tab appears in the left navigation under **Virtualization**.
+
+### 7. Create a default RightsizingPolicy
+
+```bash
+oc apply -f config/samples/rightsizingpolicy.yaml
+```
+
+This creates a cluster-scoped `RightsizingPolicy` named `default` with sensible defaults (14-day lookback, P95 percentile, 20% headroom). You can edit these values from the Policy tab in the console or via `oc edit rightsizingpolicy default`.
+
+### 8. Verify the installation
+
+```bash
+# Check all pods are running
+oc get pods -n ovro-system
+
+# Check the CRDs are installed
+oc get crd | grep rightsizing
+
+# Check recommendations are being generated (may take up to reconcileIntervalMinutes)
+oc get rightsizingrecommendations -A
+```
+
+## Demo Mode
+
+Demo mode generates synthetic rightsizing recommendations for all VMs without requiring real Prometheus metrics data. This is useful for demos, testing the UI, and validating the approval workflow.
+
+To enable demo mode, set the `OVRO_DEMO_MODE` environment variable on the backend deployment:
+
+```bash
+oc set env deployment/controller-manager -n ovro-system OVRO_DEMO_MODE=true
+```
+
+In demo mode:
+- Every VM gets a synthetic recommendation (half are downsize, half are upsize, based on VM name)
+- Clicking "Rightsize" always triggers the approval workflow and displays the approval URL with a JWT token directly in the dialog
+- No signing key secret, owner labels, or notification configuration is required — a random signing key is auto-generated at startup
+- You can copy the approval URL from the dialog and open it in a browser to walk through the full approval/rejection flow
+
+To disable demo mode:
+
+```bash
+oc set env deployment/controller-manager -n ovro-system OVRO_DEMO_MODE-
+```
+
+## Approval Workflow Setup (Optional)
+
+The approval workflow is optional. Without it, clicking "Rightsize" applies changes immediately. To enable it:
+
+### 1. Create the signing key secret
+
+The signing key is used to generate and validate JWT approval tokens.
+
+```bash
+# Generate a random signing key
+openssl rand -base64 32 > /tmp/signing-key
+
+# Create the Kubernetes secret
+oc create secret generic ovro-approval-signing-key \
+  --from-file=key=/tmp/signing-key \
+  -n ovro-system
+
+# Clean up the local file
+rm /tmp/signing-key
+```
+
+### 2. Label VMs with owners
+
+The approval workflow activates when a VM (or its namespace) has the owner label. Without it, changes are applied immediately as before.
+
+```bash
+# Label a specific VM
+oc label vm <vm-name> -n <namespace> rightsizing.redhatconsulting.io/owner=user@example.com
+
+# Or label an entire namespace (applies to all VMs in it)
+oc label namespace <namespace> rightsizing.redhatconsulting.io/owner=team-lead@example.com
+```
+
+VM-level labels take precedence over namespace-level labels.
+
+### 3. Deploy the approval proxy
+
+Edit `deploy/approval-proxy-deployment.yaml` and update the image reference, then apply:
+
+```bash
+oc apply -f deploy/approval-proxy-serviceaccount.yaml
+oc apply -f deploy/approval-proxy-deployment.yaml
+oc apply -f deploy/approval-proxy-service.yaml
+```
+
+### 4. Create the approval route
+
+Edit `deploy/approval-proxy-route.yaml` and set the `spec.host` to your desired hostname (e.g., `ovro-approval.apps.<cluster-domain>`), then apply:
+
+```bash
+oc apply -f deploy/approval-proxy-route.yaml
+```
+
+### 5. Configure the backend with the approval route hostname
+
+```bash
+# Get the route hostname
+APPROVAL_HOST=$(oc get route ovro-approval -n ovro-system -o jsonpath='{.spec.host}')
+
+# Set environment variables on the backend
+oc set env deployment/controller-manager -n ovro-system \
+  OVRO_APPROVAL_ROUTE_HOST=${APPROVAL_HOST} \
+  SIGNING_KEY_PATH=/etc/ovro/signing-key/key
+```
+
+You also need to mount the signing key secret into the backend pod. Add a volume and volumeMount to the controller-manager deployment:
+
+```bash
+oc patch deployment controller-manager -n ovro-system --type=json -p='[
+  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "signing-key", "secret": {"secretName": "ovro-approval-signing-key"}}},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "signing-key", "mountPath": "/etc/ovro/signing-key", "readOnly": true}}
+]'
+```
+
+## Notification Configuration (Optional)
+
+Notifications are sent to VM owners when a rightsizing change requires approval. Configure notification channels via a ConfigMap.
+
+### Supported forwarders
+
+| Type | Description | Credentials Secret Fields |
+|------|-------------|---------------------------|
+| `slack` | DMs the owner or posts to a channel via Slack Bot API | `botToken` |
+| `teams` | DMs the owner or posts to a channel via Microsoft Graph API | `tenantId`, `clientId`, `clientSecret` |
+| `smtp` | Sends email via SMTP (STARTTLS, implicit TLS, or plain) | `username`, `password` |
+| `snmp` | Sends SNMP trap | (no credentials — uses community string from config) |
+| `pagerduty` | Creates PagerDuty incident | `routingKey` |
+| `rocketchat` | Posts to a Rocket.Chat channel | `authToken`, `userId` |
+| `servicenow` | Creates ServiceNow incident with approval link | `username`, `password` |
+
+> **Note:** Not all notification forwarders have been thoroughly tested. The Slack and SMTP forwarders have received the most testing. If you encounter issues with other forwarders, please report them.
+
+### Owner-based routing (Slack and Teams)
+
+Slack and Teams resolve the notification target dynamically from the `rightsizing.redhatconsulting.io/owner` label:
+
+| Owner label value | Behaviour |
+|-------------------|-----------|
+| `user@company.com` | Looks up `user` first (without domain), then full email. Sends a DM to the matched user. |
+| `#channel-name` | Posts to the named channel (Slack) or uses the webhook fallback (Teams). |
+| `CXXXXXXXX` | Posts to the Slack channel by ID. |
+
+If user lookup fails, both forwarders fall back to the `channel` field in the ConfigMap. SMTP is the only forwarder that sends directly to the `user@company.com` address as-is.
+
+### Create the notification ConfigMap
+
+Create a ConfigMap `ovro-notifications` in the `ovro-system` namespace. A template is provided at `deploy/ovro-notifications-configmap.yaml`:
+
+```bash
+oc apply -f deploy/ovro-notifications-configmap.yaml
+```
+
+Edit the ConfigMap to enable and configure the forwarders you need:
+
+```bash
+oc edit configmap ovro-notifications -n ovro-system
+```
+
+Example configuration enabling Slack and SMTP:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovro-notifications
+  namespace: ovro-system
+data:
+  config.yaml: |
+    forwarders:
+      # Slack: DMs the owner by email, falls back to channel if lookup fails
+      - type: slack
+        enabled: true
+        channel: "#vm-rightsizing"    # fallback only
+        secretRef: ovro-slack-credentials
+      - type: smtp
+        enabled: true
+        from: "ovro@company.com"
+        to: "{{owner}}"
+        smtpServer: "smtp.company.com"
+        smtpPort: 587
+        smtpTLS: "starttls"              # "starttls", "tls", or "none"
+        smtpTLSSkipVerify: false
+        secretRef: ovro-smtp-credentials
+```
+
+### Create credential secrets
+
+Each enabled forwarder that requires credentials references a Kubernetes Secret by name via the `secretRef` field. Create these secrets in the `ovro-system` namespace:
+
+```bash
+# Slack (requires a Slack Bot token with chat:write and users:read.email scopes)
+oc create secret generic ovro-slack-credentials \
+  --from-literal=botToken='xoxb-your-bot-token' \
+  -n ovro-system
+
+# Teams (requires an Azure AD app registration with Chat.Create, ChatMessage.Send, User.Read.All)
+oc create secret generic ovro-teams-credentials \
+  --from-literal=tenantId='your-tenant-id' \
+  --from-literal=clientId='your-client-id' \
+  --from-literal=clientSecret='your-client-secret' \
+  -n ovro-system
+
+# SMTP
+oc create secret generic ovro-smtp-credentials \
+  --from-literal=username='ovro@company.com' \
+  --from-literal=password='app-password-here' \
+  -n ovro-system
+
+# ServiceNow
+oc create secret generic ovro-servicenow-credentials \
+  --from-literal=username='api-user' \
+  --from-literal=password='api-password' \
+  -n ovro-system
+```
+
+### Mount the notification config into the backend
+
+The backend reads the notification config from `/etc/ovro/notifications/config.yaml` by default. Mount the ConfigMap:
+
+```bash
+oc patch deployment controller-manager -n ovro-system --type=json -p='[
+  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "notification-config", "configMap": {"name": "ovro-notifications"}}},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "notification-config", "mountPath": "/etc/ovro/notifications", "readOnly": true}}
+]'
+```
+
+## CI/CD with Tekton
+
+A Tekton pipeline is included at `tekton/pipeline.yaml`. It builds all three container images and deploys them to the cluster.
+
+### Pipeline parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `git-url` | Git repository URL |
+| `git-revision` | Branch or tag to build (default: `main`) |
+| `image-registry` | Container registry prefix for built images |
+
+### Pipeline tasks
+
+1. **git-clone** — clones the repository
+2. **build-backend** — builds `Dockerfile.backend` and pushes `ovro-backend` image
+3. **build-plugin** — builds `console-plugin/Dockerfile` and pushes `ovro-console-plugin` image (runs in parallel with build-approval-proxy)
+4. **build-approval-proxy** — builds `Dockerfile.approval-proxy` and pushes `ovro-approval-proxy` image (runs in parallel with build-plugin)
+5. **deploy** — deploys all components to the cluster
+
+### Running the pipeline
+
+```bash
+# Apply the pipeline
+oc apply -f tekton/pipeline.yaml
+
+# Start a pipeline run
+tkn pipeline start ovro-build \
+  -p git-url=https://github.com/kborup-redhat/ovro.git \
+  -p git-revision=main \
+  -p image-registry=image-registry.openshift-image-registry.svc:5000/ovro-system \
+  -w name=shared-workspace,volumeClaimTemplateFile=tekton/workspace-pvc.yaml
+```
+
+## Configuration Reference
+
+### RightsizingPolicy
+
+The `RightsizingPolicy` CR controls operator behaviour. Create one named `default` (cluster-scoped):
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -87,6 +407,73 @@ The `RightsizingPolicy` CR controls the operator behaviour:
 | `thresholds.upsizeUtilizationPercent` | 90 | P95 above this triggers upsize |
 | `reconcileIntervalMinutes` | 60 | How often to re-evaluate each VM |
 | `revertRetentionDays` | 30 | Days a revert option stays available |
+
+### Environment Variables
+
+Set on the `controller-manager` deployment:
+
+| Variable | Description |
+|----------|-------------|
+| `OVRO_DEMO_MODE` | Set to `true` to enable demo mode |
+| `OVRO_APPROVAL_ROUTE_HOST` | Hostname of the approval proxy route (e.g., `ovro-approval.apps.cluster.example.com`) |
+| `SIGNING_KEY_PATH` | Path to the JWT signing key file (e.g., `/etc/ovro/signing-key/key`) |
+| `TLS_CERT_FILE` | Path to TLS certificate (auto-set by serving-cert) |
+| `TLS_KEY_FILE` | Path to TLS key (auto-set by serving-cert) |
+
+### Annotations and Labels
+
+| Key | Target | Description |
+|-----|--------|-------------|
+| `rightsizing.redhatconsulting.io/exclude: "true"` | VM annotation | Excludes the VM from rightsizing analysis |
+| `rightsizing.redhatconsulting.io/owner` | VM or Namespace label | Sets the owner for the approval workflow (email or username) |
+
+## Recommendation States
+
+| State | Description |
+|-------|-------------|
+| `pending` | Recommendation created, waiting for admin action |
+| `awaiting-approval` | Admin clicked Rightsize, owner notified, waiting for owner to approve/reject |
+| `approved` | Owner approved (transitional — moves to applied) |
+| `applied-pending-restart` | Changes applied to VM spec, waiting for restart |
+| `applied` | Changes applied and active |
+| `reverted` | Changes were reverted to the original configuration |
+| `failed` | Something went wrong during apply |
+
+## Building from Source
+
+```bash
+# Backend binary
+go build -o bin/manager cmd/main.go
+
+# Approval proxy binary
+go build -o bin/approval-proxy cmd/approval-proxy/main.go
+
+# Console plugin
+cd console-plugin && npm ci && npm run build
+
+# Run Go tests
+go test ./...
+
+# TypeScript type check
+cd console-plugin && npx tsc --noEmit
+```
+
+## Uninstalling
+
+```bash
+# Remove the console plugin
+oc patch console.operator.openshift.io cluster \
+  --type=merge \
+  --patch='{"spec":{"plugins":[]}}'
+
+# Delete all OVRO resources
+oc delete -f deploy/
+oc delete -f config/rbac/
+oc delete -f config/crd/bases/
+
+# Delete the namespace
+oc delete namespace ovro-system
+```
 
 ## License
 

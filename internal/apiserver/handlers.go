@@ -174,6 +174,44 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Demo mode: always simulate approval workflow with a generated token
+	if s.DemoMode && s.TokenManager != nil {
+		demoOwner := "demo-user@example.com"
+		token, err := s.TokenManager.GenerateToken(namespace, name, demoOwner, 14*24*time.Hour)
+		if err != nil {
+			slog.Error("generating demo approval token", "error", err)
+			http.Error(w, "failed to generate approval token", http.StatusInternalServerError)
+			return
+		}
+
+		now := metav1.Now()
+		rec.Status.State = rightsizingv1alpha1.StateAwaitingApproval
+		rec.Status.Owner = demoOwner
+		rec.Status.ApprovalToken = token
+		rec.Status.NotifiedAt = &now
+		rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
+			CPU:    rec.Spec.Current.CPU,
+			Memory: rec.Spec.Current.Memory,
+		}
+
+		if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+			slog.Error("updating recommendation for demo approval", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		approvalURL := fmt.Sprintf("https://%s/approve?token=%s", s.ApprovalRouteHost, token)
+
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]interface{}{
+			"status":      "awaiting-approval",
+			"owner":       demoOwner,
+			"message":     "Demo mode: use the approval URL to approve or reject.",
+			"approvalUrl": approvalURL,
+		})
+		return
+	}
+
 	// Check if VM has an owner — route to approval workflow if so
 	if s.OwnerResolver != nil && s.TokenManager != nil && s.Notifier != nil {
 		vmName := rec.Spec.VirtualMachineRef.Name
@@ -181,12 +219,10 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		ownerStr, err := s.OwnerResolver.ResolveOwner(r.Context(), vmName, vmNS)
 		if err != nil {
 			slog.Error("resolving owner", "error", err)
-			// Fall through to direct apply if owner resolution fails
 		}
 
 		if ownerStr != "" {
-			// Owner exists — route to approval workflow
-			token, err := s.TokenManager.GenerateToken(namespace, name, ownerStr, 7*24*time.Hour)
+			token, err := s.TokenManager.GenerateToken(namespace, name, ownerStr, 14*24*time.Hour)
 			if err != nil {
 				slog.Error("generating approval token", "error", err)
 				http.Error(w, "failed to generate approval token", http.StatusInternalServerError)
@@ -198,8 +234,6 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			rec.Status.Owner = ownerStr
 			rec.Status.ApprovalToken = token
 			rec.Status.NotifiedAt = &now
-
-			// Store the revert config now in case we need it later
 			rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
 				CPU:    rec.Spec.Current.CPU,
 				Memory: rec.Spec.Current.Memory,
@@ -211,10 +245,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Build approval URL
 			approvalURL := fmt.Sprintf("https://%s/approve?token=%s", s.ApprovalRouteHost, token)
 
-			// Send notifications (don't block on errors)
 			notification := &notifier.Notification{
 				VMName:        vmName,
 				Namespace:     vmNS,
@@ -231,12 +263,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				slog.Error("notification failed", "error", e)
 			}
 
-			// Return 202 Accepted
 			w.WriteHeader(http.StatusAccepted)
 			writeJSON(w, map[string]interface{}{
-				"status":  "awaiting-approval",
-				"owner":   ownerStr,
-				"message": "Notification sent to owner. Awaiting approval.",
+				"status":      "awaiting-approval",
+				"owner":       ownerStr,
+				"message":     "Notification sent to owner. Awaiting approval.",
+				"approvalUrl": approvalURL,
 			})
 			return
 		}

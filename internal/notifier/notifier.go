@@ -28,21 +28,23 @@ type Forwarder interface {
 
 // ForwarderConfig represents configuration for a single forwarder
 type ForwarderConfig struct {
-	Type            string `yaml:"type"`
-	Enabled         bool   `yaml:"enabled"`
-	Channel         string `yaml:"channel,omitempty"`
-	SecretRef       string `yaml:"secretRef,omitempty"`
-	From            string `yaml:"from,omitempty"`
-	To              string `yaml:"to,omitempty"`
-	SMTPServer      string `yaml:"smtpServer,omitempty"`
-	SMTPPort        int    `yaml:"smtpPort,omitempty"`
-	Host            string `yaml:"host,omitempty"`
-	Port            int    `yaml:"port,omitempty"`
-	Community       string `yaml:"community,omitempty"`
-	ServerURL       string `yaml:"serverUrl,omitempty"`
-	InstanceURL     string `yaml:"instanceUrl,omitempty"`
-	AssignmentGroup string `yaml:"assignmentGroup,omitempty"`
-	Category        string `yaml:"category,omitempty"`
+	Type                  string `yaml:"type"`
+	Enabled               bool   `yaml:"enabled"`
+	Channel               string `yaml:"channel,omitempty"`
+	SecretRef             string `yaml:"secretRef,omitempty"`
+	From                  string `yaml:"from,omitempty"`
+	To                    string `yaml:"to,omitempty"`
+	SMTPServer            string `yaml:"smtpServer,omitempty"`
+	SMTPPort              int    `yaml:"smtpPort,omitempty"`
+	SMTPTLS               string `yaml:"smtpTLS,omitempty"`               // "starttls" (default), "tls", or "none"
+	SMTPTLSSkipVerify     bool   `yaml:"smtpTLSSkipVerify,omitempty"`
+	Host                  string `yaml:"host,omitempty"`
+	Port                  int    `yaml:"port,omitempty"`
+	Community             string `yaml:"community,omitempty"`
+	ServerURL             string `yaml:"serverUrl,omitempty"`
+	InstanceURL           string `yaml:"instanceUrl,omitempty"`
+	AssignmentGroup       string `yaml:"assignmentGroup,omitempty"`
+	Category              string `yaml:"category,omitempty"`
 }
 
 // NotifierConfig represents the complete notifier configuration

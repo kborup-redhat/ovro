@@ -138,8 +138,8 @@ func TestNewDispatcher_DisabledForwardersSkipped(t *testing.T) {
 
 	secretGetter := &mockSecretGetter{
 		secrets: map[string]map[string][]byte{
-			"slack-secret": {"webhookUrl": []byte("https://hooks.slack.com/test")},
-			"teams-secret": {"webhookUrl": []byte("https://outlook.office.com/test")},
+			"slack-secret": {"botToken": []byte("xoxb-test-token")},
+			"teams-secret": {"tenantId": []byte("test-tenant"), "clientId": []byte("test-client"), "clientSecret": []byte("test-secret")},
 		},
 	}
 
@@ -171,8 +171,8 @@ func TestNewDispatcher_EnabledForwardersCreated(t *testing.T) {
 
 	secretGetter := &mockSecretGetter{
 		secrets: map[string]map[string][]byte{
-			"slack-secret": {"webhookUrl": []byte("https://hooks.slack.com/test")},
-			"teams-secret": {"webhookUrl": []byte("https://outlook.office.com/test")},
+			"slack-secret": {"botToken": []byte("xoxb-test-token")},
+			"teams-secret": {"tenantId": []byte("test-tenant"), "clientId": []byte("test-client"), "clientSecret": []byte("test-secret")},
 		},
 	}
 
