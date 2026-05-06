@@ -40,6 +40,7 @@ spec:
       containers:
         - name: plugin
           image: image-registry.openshift-image-registry.svc:5000/ovro-system/ovro-console-plugin:main
+          imagePullPolicy: Always
           ports:
             - containerPort: 9443
               protocol: TCP
