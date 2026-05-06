@@ -23,8 +23,11 @@ import (
 
 	"github.com/go-logr/logr"
 	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
+	"github.com/kborup-redhat/ovro/internal/applier"
+	"github.com/kborup-redhat/ovro/internal/approval"
 	"github.com/kborup-redhat/ovro/internal/calculator"
 	"github.com/kborup-redhat/ovro/internal/notifier"
+	"github.com/kborup-redhat/ovro/internal/owner"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,6 +89,9 @@ type RightsizingRecommendationReconciler struct {
 	PromClient        PrometheusQuerier
 	Log               logr.Logger
 	DemoMode          bool
+	Applier           *applier.Applier
+	OwnerResolver     *owner.Resolver
+	TokenManager      *approval.TokenManager
 	Notifier          *notifier.Dispatcher
 	ApprovalRouteHost string
 }
@@ -307,7 +313,104 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 		}
 	}
 
+	// Auto-apply if enabled in policy and recommendation is pending.
+	if policy.Spec.AutoMode.Enabled && rec.Status.State == rightsizingv1alpha1.StatePending {
+		r.autoApply(ctx, log, rec, vm)
+	}
+
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// autoApply applies a pending recommendation automatically. If the VM has an
+// owner label, the approval workflow takes precedence and the recommendation
+// moves to awaiting-approval instead of being applied directly.
+func (r *RightsizingRecommendationReconciler) autoApply(ctx context.Context, log logr.Logger, rec *rightsizingv1alpha1.RightsizingRecommendation, vm *unstructured.Unstructured) {
+	vmName := rec.Spec.VirtualMachineRef.Name
+	vmNS := rec.Spec.VirtualMachineRef.Namespace
+
+	// Check for owner — approval flow takes precedence.
+	if r.OwnerResolver != nil && r.TokenManager != nil {
+		ownerStr, err := r.OwnerResolver.ResolveOwner(ctx, vmName, vmNS)
+		if err != nil {
+			log.Error(err, "auto-apply: resolving owner")
+		}
+
+		if ownerStr != "" {
+			token, err := r.TokenManager.GenerateToken(vmNS, rec.Name, ownerStr, 14*24*time.Hour)
+			if err != nil {
+				log.Error(err, "auto-apply: generating approval token")
+				return
+			}
+
+			now := metav1.Now()
+			rec.Status.State = rightsizingv1alpha1.StateAwaitingApproval
+			rec.Status.Owner = ownerStr
+			rec.Status.ApprovalToken = token
+			rec.Status.NotifiedAt = &now
+			rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
+				CPU:    rec.Spec.Current.CPU,
+				Memory: rec.Spec.Current.Memory,
+			}
+
+			if err := r.Status().Update(ctx, rec); err != nil {
+				log.Error(err, "auto-apply: updating status for approval")
+				return
+			}
+
+			if r.Notifier != nil && r.ApprovalRouteHost != "" {
+				approvalURL := fmt.Sprintf("https://%s/approve?token=%s", r.ApprovalRouteHost, token)
+				n := &notifier.Notification{
+					VMName:        vmName,
+					Namespace:     vmNS,
+					Owner:         ownerStr,
+					Direction:     string(rec.Spec.Direction),
+					CurrentCPU:    rec.Spec.Current.CPU.Cores,
+					CurrentMemory: int32(rec.Spec.Current.Memory.Value() / (1024 * 1024 * 1024)),
+					RecCPU:        rec.Spec.Recommended.CPU.Cores,
+					RecMemory:     int32(rec.Spec.Recommended.Memory.Value() / (1024 * 1024 * 1024)),
+					ApprovalURL:   approvalURL,
+				}
+				errs := r.Notifier.SendAll(ctx, n)
+				for _, e := range errs {
+					log.Error(e, "auto-apply: notification failed")
+				}
+			}
+
+			log.Info("Auto-apply: routed to approval workflow", "owner", ownerStr)
+			return
+		}
+	}
+
+	// No owner — apply directly.
+	now := metav1.Now()
+	rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
+		CPU:    rec.Spec.Current.CPU,
+		Memory: rec.Spec.Current.Memory,
+	}
+
+	if r.Applier != nil {
+		if err := r.Applier.PatchVMResources(ctx, vmName, vmNS, rec.Spec.Recommended.CPU.Cores, rec.Spec.Recommended.Memory); err != nil {
+			log.Error(err, "auto-apply: patching VM resources")
+			rec.Status.State = rightsizingv1alpha1.StateFailed
+			rec.Status.Message = fmt.Sprintf("auto-apply failed: %v", err)
+			_ = r.Status().Update(ctx, rec)
+			return
+		}
+	}
+
+	if applier.IsHotplugCapable(vm) {
+		rec.Status.State = rightsizingv1alpha1.StateApplied
+		rec.Status.AppliedAt = &now
+	} else {
+		rec.Status.State = rightsizingv1alpha1.StateAppliedPendingRestart
+	}
+
+	if err := r.Status().Update(ctx, rec); err != nil {
+		log.Error(err, "auto-apply: updating status after apply")
+		return
+	}
+
+	log.Info("Auto-apply: applied directly", "direction", rec.Spec.Direction, "hotplug", applier.IsHotplugCapable(vm))
 }
 
 // SetupWithManager sets up the controller with the Manager.

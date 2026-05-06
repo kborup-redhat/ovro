@@ -319,13 +319,88 @@ func main() {
 		setupLog.Info("Demo mode enabled — generating synthetic recommendations for all VMs")
 	}
 
+	// Initialize approval workflow components (optional — skipped if not configured).
+	// These are shared between the API server and the recommendation controller
+	// so that auto-apply can trigger the approval flow.
+	var serverOpts []apiserver.ServerOption
+	var tokenMgr *approval.TokenManager
+	var dispatcher *notifier.Dispatcher
+	ownerRes := &owner.Resolver{Client: mgr.GetClient()}
+
+	if demoMode {
+		serverOpts = append(serverOpts, apiserver.WithDemoMode(true))
+	}
+
+	if demoMode && signingKeyPath == "" {
+		demoKey := make([]byte, 32)
+		if _, err := rand.Read(demoKey); err != nil {
+			setupLog.Error(err, "failed to generate demo signing key")
+			os.Exit(1)
+		}
+		tokenMgr = approval.NewTokenManager(demoKey)
+		serverOpts = append(serverOpts, apiserver.WithTokenManager(tokenMgr))
+		if approvalRouteHost == "" {
+			approvalRouteHost = "localhost:8443"
+		}
+		serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
+		setupLog.Info("Demo mode: auto-generated signing key for approval tokens")
+	}
+
+	if signingKeyPath != "" {
+		signingKey, err := os.ReadFile(signingKeyPath)
+		if err != nil {
+			setupLog.Error(err, "failed to read signing key")
+			os.Exit(1)
+		}
+
+		tokenMgr = approval.NewTokenManager(signingKey)
+
+		serverOpts = append(serverOpts,
+			apiserver.WithTokenManager(tokenMgr),
+			apiserver.WithOwnerResolver(ownerRes),
+		)
+
+		if approvalRouteHost != "" {
+			serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
+		}
+
+		if _, err := os.Stat(notificationConfigPath); err == nil {
+			configData, err := os.ReadFile(notificationConfigPath)
+			if err != nil {
+				setupLog.Error(err, "failed to read notification config")
+				os.Exit(1)
+			}
+
+			var cfg notifier.NotifierConfig
+			if err := yaml.Unmarshal(configData, &cfg); err != nil {
+				setupLog.Error(err, "failed to parse notification config")
+				os.Exit(1)
+			}
+
+			secretGetter := &k8sSecretGetter{client: mgr.GetClient()}
+			var dispErr error
+			dispatcher, dispErr = notifier.NewDispatcher(cfg, secretGetter, ctrl.Log.WithName("notifier"))
+			if dispErr != nil {
+				setupLog.Error(dispErr, "failed to create notification dispatcher")
+				os.Exit(1)
+			}
+			serverOpts = append(serverOpts, apiserver.WithNotifier(dispatcher))
+			setupLog.Info("Notification forwarders configured")
+		}
+	}
+
 	// Set up the RightsizingRecommendation controller.
 	if err := (&controller.RightsizingRecommendationReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		PromClient: promClient,
-		Log:        ctrl.Log.WithName("controllers").WithName("Recommendation"),
-		DemoMode:   demoMode,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		PromClient:        promClient,
+		Log:               ctrl.Log.WithName("controllers").WithName("Recommendation"),
+		DemoMode:          demoMode,
+		Applier:           vmApplier,
+		OwnerResolver:     ownerRes,
+		TokenManager:      tokenMgr,
+		Notifier:          dispatcher,
+		ApprovalRouteHost: approvalRouteHost,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RightsizingRecommendation")
 		os.Exit(1)
@@ -366,73 +441,6 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
-	}
-
-	// Initialize approval workflow components (optional — skipped if not configured)
-	var serverOpts []apiserver.ServerOption
-
-	if demoMode {
-		serverOpts = append(serverOpts, apiserver.WithDemoMode(true))
-	}
-
-	// In demo mode, auto-generate a signing key if none is provided
-	if demoMode && signingKeyPath == "" {
-		demoKey := make([]byte, 32)
-		if _, err := rand.Read(demoKey); err != nil {
-			setupLog.Error(err, "failed to generate demo signing key")
-			os.Exit(1)
-		}
-		tokenMgr := approval.NewTokenManager(demoKey)
-		serverOpts = append(serverOpts, apiserver.WithTokenManager(tokenMgr))
-		if approvalRouteHost == "" {
-			approvalRouteHost = "localhost:8443"
-		}
-		serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
-		setupLog.Info("Demo mode: auto-generated signing key for approval tokens")
-	}
-
-	if signingKeyPath != "" {
-		signingKey, err := os.ReadFile(signingKeyPath)
-		if err != nil {
-			setupLog.Error(err, "failed to read signing key")
-			os.Exit(1)
-		}
-
-		tokenMgr := approval.NewTokenManager(signingKey)
-		ownerRes := &owner.Resolver{Client: mgr.GetClient()}
-
-		serverOpts = append(serverOpts,
-			apiserver.WithTokenManager(tokenMgr),
-			apiserver.WithOwnerResolver(ownerRes),
-		)
-
-		if approvalRouteHost != "" {
-			serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
-		}
-
-		// Load notification config
-		if _, err := os.Stat(notificationConfigPath); err == nil {
-			configData, err := os.ReadFile(notificationConfigPath)
-			if err != nil {
-				setupLog.Error(err, "failed to read notification config")
-				os.Exit(1)
-			}
-
-			var cfg notifier.NotifierConfig
-			if err := yaml.Unmarshal(configData, &cfg); err != nil {
-				setupLog.Error(err, "failed to parse notification config")
-				os.Exit(1)
-			}
-
-			secretGetter := &k8sSecretGetter{client: mgr.GetClient()}
-			dispatcher, err := notifier.NewDispatcher(cfg, secretGetter, ctrl.Log.WithName("notifier"))
-			if err != nil {
-				setupLog.Error(err, "failed to create notification dispatcher")
-				os.Exit(1)
-			}
-			serverOpts = append(serverOpts, apiserver.WithNotifier(dispatcher))
-			setupLog.Info("Notification forwarders configured")
-		}
 	}
 
 	// Register the REST API server with the manager for graceful lifecycle management.

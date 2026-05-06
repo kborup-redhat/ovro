@@ -85,7 +85,6 @@ export interface RightsizingPolicySpec {
   autoMode: {
     enabled: boolean;
     schedule: string;
-    requireApproval: boolean;
   };
   reconcileIntervalMinutes: number;
 }

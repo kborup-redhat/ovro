@@ -33,9 +33,8 @@ type ThresholdsSpec struct {
 }
 
 type AutoModeSpec struct {
-	Enabled         bool   `json:"enabled"`
-	Schedule        string `json:"schedule"`
-	RequireApproval bool   `json:"requireApproval"`
+	Enabled  bool   `json:"enabled"`
+	Schedule string `json:"schedule"`
 }
 
 // +kubebuilder:object:root=true

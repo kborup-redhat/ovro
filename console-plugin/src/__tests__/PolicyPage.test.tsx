@@ -16,7 +16,7 @@ describe('PolicyPage', () => {
         algorithm: { percentile: 95, headroomPercent: 20 },
         thresholds: { minCpuSavings: 1, minMemorySavings: '1Gi', upsizeUtilizationPercent: 90 },
         revertRetentionDays: 30,
-        autoMode: { enabled: false, schedule: '0 2 * * *', requireApproval: true },
+        autoMode: { enabled: false, schedule: '0 2 * * *' },
         reconcileIntervalMinutes: 60,
       },
     });

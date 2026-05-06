@@ -19,7 +19,7 @@ const defaultSpec: RightsizingPolicySpec = {
   algorithm: { percentile: 95, headroomPercent: 20 },
   thresholds: { minCpuSavings: 1, minMemorySavings: '1Gi', upsizeUtilizationPercent: 90 },
   revertRetentionDays: 30,
-  autoMode: { enabled: false, schedule: '0 2 * * *', requireApproval: true },
+  autoMode: { enabled: false, schedule: '0 2 * * *' },
   reconcileIntervalMinutes: 60,
 };
 
@@ -101,9 +101,9 @@ export const PolicyPage: React.FC = () => {
         <FormGroup label="Schedule (cron)" fieldId="schedule">
           <TextInput id="schedule" value={spec.autoMode.schedule} onChange={(_e, v) => setSpec({ ...spec, autoMode: { ...spec.autoMode, schedule: v } })} isDisabled={!spec.autoMode.enabled} />
         </FormGroup>
-        <FormGroup fieldId="requireApproval">
-          <Switch id="requireApproval" label="Require VM Auto-Approve Annotation" isChecked={spec.autoMode.requireApproval} onChange={(_e, v) => setSpec({ ...spec, autoMode: { ...spec.autoMode, requireApproval: v } })} isDisabled={!spec.autoMode.enabled} />
-        </FormGroup>
+        {spec.autoMode.enabled && (
+          <Alert variant="info" isInline isPlain title="VMs with an owner label will require owner approval before changes are applied." />
+        )}
       </FormSection>
 
       {error && <Alert variant="danger" isInline title={error} />}

@@ -19,5 +19,9 @@ func DefaultPolicySpec() RightsizingPolicySpec {
 		},
 		RevertRetentionDays:      30,
 		ReconcileIntervalMinutes: 60,
+		AutoMode: AutoModeSpec{
+			Enabled:  false,
+			Schedule: "0 2 * * *",
+		},
 	}
 }

@@ -51,13 +51,10 @@ spec:
                 properties:
                   enabled:
                     type: boolean
-                  requireApproval:
-                    type: boolean
                   schedule:
                     type: string
                 required:
                 - enabled
-                - requireApproval
                 - schedule
                 type: object
               lookbackDays:
