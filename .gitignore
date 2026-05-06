@@ -34,6 +34,9 @@ console-plugin/dist/
 .superpowers/
 docs/superpowers/
 
+# HonKit build output
+_book/
+
 # Claude
 .claude/
 

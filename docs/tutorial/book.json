@@ -1,0 +1,6 @@
+{
+  "title": "OVRO - OpenShift Virtualization Rightsizing Operator Tutorial",
+  "plugins": [
+    "mermaid-hybrid"
+  ]
+}
