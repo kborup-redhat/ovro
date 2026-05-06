@@ -65,7 +65,15 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
-        ports: []
+        env:
+          - name: TLS_CERT_FILE
+            value: /var/serving-cert/tls.crt
+          - name: TLS_KEY_FILE
+            value: /var/serving-cert/tls.key
+        ports:
+          - containerPort: 8443
+            name: https
+            protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -93,7 +101,13 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        volumeMounts:
+          - name: serving-cert
+            mountPath: /var/serving-cert
+            readOnly: true
+      volumes:
+        - name: serving-cert
+          secret:
+            secretName: ovro-backend-cert
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
