@@ -13,7 +13,7 @@ spec:
       basePath: /
   proxy:
     - alias: ovro-backend
-      authorize: true
+      authorization: UserToken
       endpoint:
         type: Service
         service:

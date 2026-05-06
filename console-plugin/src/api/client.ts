@@ -1,3 +1,4 @@
+import { consoleFetch } from '@openshift-console/dynamic-plugin-sdk';
 import {
   RightsizingRecommendation,
   OverviewData,
@@ -9,7 +10,7 @@ import {
 const API_BASE = '/api/proxy/plugin/ovro-console-plugin/ovro-backend/api/v1';
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await consoleFetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
