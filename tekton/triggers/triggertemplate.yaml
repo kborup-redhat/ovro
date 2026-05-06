@@ -20,6 +20,10 @@ spec:
             value: $(tt.params.git-url)
           - name: git-revision
             value: $(tt.params.git-revision)
+        taskRunTemplate:
+          podTemplate:
+            securityContext:
+              fsGroup: 65532
         workspaces:
           - name: workspace
             persistentVolumeClaim:
