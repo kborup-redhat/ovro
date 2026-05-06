@@ -65,7 +65,9 @@ type prometheusAdapter struct {
 	client *prometheus.Client
 }
 
-func (a *prometheusAdapter) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*controller.VMUtilization, error) {
+func (a *prometheusAdapter) GetVMUtilization(
+	ctx context.Context, vmName, namespace string, lookbackDays int,
+) (*controller.VMUtilization, error) {
 	u, err := a.client.GetVMUtilization(ctx, vmName, namespace, lookbackDays)
 	if err != nil {
 		return nil, err
@@ -134,7 +136,9 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&apiAddr, "api-bind-address", ":8443", "The address the REST API server binds to.")
-	flag.StringVar(&prometheusURL, "prometheus-url", "https://thanos-querier.openshift-monitoring.svc:9091", "The Prometheus/Thanos URL.")
+	flag.StringVar(&prometheusURL, "prometheus-url",
+		"https://thanos-querier.openshift-monitoring.svc:9091",
+		"The Prometheus/Thanos URL.")
 	opts := zap.Options{
 		Development: false,
 	}

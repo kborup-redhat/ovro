@@ -36,6 +36,9 @@ docs/superpowers/
 
 # HonKit build output
 _book/
+docs/tutorial/node_modules/
+docs/tutorial/package.json
+docs/tutorial/package-lock.json
 
 # Claude
 .claude/

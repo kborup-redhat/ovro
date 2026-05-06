@@ -29,8 +29,13 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install HonKit and plugins
+        working-directory: docs/tutorial
+        run: npm install honkit honkit-plugin-mermaid-hybrid
+
       - name: Build HonKit book
-        run: npx @sshaaf/tutorial-skill@latest docs build --dir docs/tutorial
+        working-directory: docs/tutorial
+        run: npx honkit build . _book
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -301,7 +301,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if item.Status.AppliedAt != nil && item.Status.AppliedAt.Time.After(today) {
+		if item.Status.AppliedAt != nil && item.Status.AppliedAt.After(today) {
 			overview.AppliedToday++
 		}
 	}
