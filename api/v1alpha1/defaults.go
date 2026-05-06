@@ -3,6 +3,7 @@ package v1alpha1
 import "k8s.io/apimachinery/pkg/api/resource"
 
 const AnnotationExclude = "rightsizing.redhatconsulting.io/exclude"
+const LabelOwner = "rightsizing.redhatconsulting.io/owner"
 
 func DefaultPolicySpec() RightsizingPolicySpec {
 	return RightsizingPolicySpec{

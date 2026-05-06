@@ -2,6 +2,7 @@ export type RecommendationDirection = 'downsize' | 'upsize';
 
 export type RecommendationState =
   | 'pending'
+  | 'awaiting-approval'
   | 'approved'
   | 'applied-pending-restart'
   | 'applied'
@@ -50,6 +51,15 @@ export interface RightsizingRecommendation {
     revertBefore: string | null;
     revertConfig: ResourceSpec | null;
     message: string;
+    owner?: string;
+    approvalToken?: string;
+    notifiedAt?: string | null;
+    approvedBy?: string;
+    approvedAt?: string | null;
+    rejectedBy?: string;
+    rejectedAt?: string | null;
+    rejectionReason?: string;
+    serviceNowIncident?: string;
   };
 }
 

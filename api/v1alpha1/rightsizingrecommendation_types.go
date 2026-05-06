@@ -32,6 +32,7 @@ type RecommendationState string
 
 const (
 	StatePending               RecommendationState = "pending"
+	StateAwaitingApproval      RecommendationState = "awaiting-approval"
 	StateApproved              RecommendationState = "approved"
 	StateAppliedPendingRestart RecommendationState = "applied-pending-restart"
 	StateApplied               RecommendationState = "applied"
@@ -100,6 +101,15 @@ type RightsizingRecommendationStatus struct {
 	RevertBefore       *metav1.Time        `json:"revertBefore,omitempty"`
 	RevertConfig       *ResourceSpec       `json:"revertConfig,omitempty"`
 	Message            string              `json:"message,omitempty"`
+	Owner              string              `json:"owner,omitempty"`
+	ApprovalToken      string              `json:"approvalToken,omitempty"`
+	NotifiedAt         *metav1.Time        `json:"notifiedAt,omitempty"`
+	ApprovedBy         string              `json:"approvedBy,omitempty"`
+	ApprovedAt         *metav1.Time        `json:"approvedAt,omitempty"`
+	RejectedBy         string              `json:"rejectedBy,omitempty"`
+	RejectedAt         *metav1.Time        `json:"rejectedAt,omitempty"`
+	RejectionReason    string              `json:"rejectionReason,omitempty"`
+	ServiceNowIncident string              `json:"serviceNowIncident,omitempty"`
 }
 
 // +kubebuilder:object:root=true
