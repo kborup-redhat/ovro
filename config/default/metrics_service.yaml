@@ -10,9 +10,9 @@ metadata:
 spec:
   ports:
   - name: https
-    port: 8443
+    port: 8444
     protocol: TCP
-    targetPort: 8443
+    targetPort: 8444
   selector:
     control-plane: controller-manager
     app.kubernetes.io/name: ovro
