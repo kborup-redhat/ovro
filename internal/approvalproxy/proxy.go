@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kborup-redhat/ovro/internal/approval"
 )
@@ -244,6 +245,11 @@ func (p *ApprovalProxy) handlePostApprove(w http.ResponseWriter, r *http.Request
 			"restartOption": restartOption,
 		}
 		if scheduledAt != "" {
+			if _, err := time.Parse(time.RFC3339, scheduledAt); err != nil {
+				if t, err2 := time.Parse("2006-01-02T15:04", scheduledAt); err2 == nil {
+					scheduledAt = t.UTC().Format(time.RFC3339)
+				}
+			}
 			bodyPayload["scheduledAt"] = scheduledAt
 		}
 	case "reject":
