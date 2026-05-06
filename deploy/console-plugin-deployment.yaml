@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovro-console-plugin
+  namespace: ovro-system
+  labels:
+    app: ovro-console-plugin
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: ovro-console-plugin-cert
+spec:
+  selector:
+    app: ovro-console-plugin
+  ports:
+    - name: https
+      port: 9443
+      targetPort: 9443
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovro-console-plugin
+  namespace: ovro-system
+  labels:
+    app: ovro-console-plugin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovro-console-plugin
+  template:
+    metadata:
+      labels:
+        app: ovro-console-plugin
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: plugin
+          image: image-registry.openshift-image-registry.svc:5000/ovro-system/ovro-console-plugin:main
+          ports:
+            - containerPort: 9443
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: cert
+              mountPath: /var/serving-cert
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: cert
+          secret:
+            secretName: ovro-console-plugin-cert

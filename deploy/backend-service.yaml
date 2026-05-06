@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovro-backend
+  namespace: ovro-system
+  labels:
+    app.kubernetes.io/name: ovro
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: ovro-backend-cert
+spec:
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: ovro
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 8443
+      protocol: TCP
