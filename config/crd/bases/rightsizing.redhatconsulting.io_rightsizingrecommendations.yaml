@@ -168,10 +168,32 @@ spec:
               appliedAt:
                 format: date-time
                 type: string
+              approvalToken:
+                type: string
+              approvedAt:
+                format: date-time
+                type: string
+              approvedBy:
+                type: string
               lastCalculated:
                 format: date-time
                 type: string
               message:
+                type: string
+              notifiedAt:
+                format: date-time
+                type: string
+              owner:
+                type: string
+              rejectedAt:
+                format: date-time
+                type: string
+              rejectedBy:
+                type: string
+              rejectionReason:
+                type: string
+              reminderSentAt:
+                format: date-time
                 type: string
               revertBefore:
                 format: date-time
@@ -206,6 +228,8 @@ spec:
                 type: object
               scheduledRestartAt:
                 format: date-time
+                type: string
+              serviceNowIncident:
                 type: string
               state:
                 type: string
