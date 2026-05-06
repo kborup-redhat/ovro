@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kborup-redhat/ovro/internal/calculator"
@@ -18,6 +20,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	bearerToken string
 }
 
 // VMMetricSample contains time-series values for a single VM metric.
@@ -42,9 +45,15 @@ type VMUtilization struct {
 }
 
 // NewClient creates a new Prometheus client with the given base URL.
+// It reads the service account token for Thanos authentication.
 func NewClient(baseURL string) *Client {
+	var token string
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+		token = strings.TrimSpace(string(data))
+	}
 	return &Client{
-		baseURL: baseURL,
+		baseURL:     baseURL,
+		bearerToken: token,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -84,6 +93,9 @@ func (c *Client) QueryRange(ctx context.Context, query string) ([]VMMetricSample
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}
 
 	resp, err := c.httpClient.Do(req)
