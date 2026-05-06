@@ -2,11 +2,13 @@ package apiserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
+	"github.com/kborup-redhat/ovro/internal/notifier"
 	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -170,6 +172,74 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	if rec.Status.State != rightsizingv1alpha1.StatePending {
 		http.Error(w, "recommendation is not in pending state", http.StatusConflict)
 		return
+	}
+
+	// Check if VM has an owner — route to approval workflow if so
+	if s.OwnerResolver != nil && s.TokenManager != nil && s.Notifier != nil {
+		vmName := rec.Spec.VirtualMachineRef.Name
+		vmNS := rec.Spec.VirtualMachineRef.Namespace
+		ownerStr, err := s.OwnerResolver.ResolveOwner(r.Context(), vmName, vmNS)
+		if err != nil {
+			slog.Error("resolving owner", "error", err)
+			// Fall through to direct apply if owner resolution fails
+		}
+
+		if ownerStr != "" {
+			// Owner exists — route to approval workflow
+			token, err := s.TokenManager.GenerateToken(namespace, name, ownerStr, 7*24*time.Hour)
+			if err != nil {
+				slog.Error("generating approval token", "error", err)
+				http.Error(w, "failed to generate approval token", http.StatusInternalServerError)
+				return
+			}
+
+			now := metav1.Now()
+			rec.Status.State = rightsizingv1alpha1.StateAwaitingApproval
+			rec.Status.Owner = ownerStr
+			rec.Status.ApprovalToken = token
+			rec.Status.NotifiedAt = &now
+
+			// Store the revert config now in case we need it later
+			rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
+				CPU:    rec.Spec.Current.CPU,
+				Memory: rec.Spec.Current.Memory,
+			}
+
+			if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+				slog.Error("updating recommendation for approval", "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Build approval URL
+			approvalURL := fmt.Sprintf("https://%s/approve?token=%s", s.ApprovalRouteHost, token)
+
+			// Send notifications (don't block on errors)
+			notification := &notifier.Notification{
+				VMName:        vmName,
+				Namespace:     vmNS,
+				Owner:         ownerStr,
+				Direction:     string(rec.Spec.Direction),
+				CurrentCPU:    rec.Spec.Current.CPU.Cores,
+				CurrentMemory: int32(rec.Spec.Current.Memory.Value() / (1024 * 1024 * 1024)),
+				RecCPU:        rec.Spec.Recommended.CPU.Cores,
+				RecMemory:     int32(rec.Spec.Recommended.Memory.Value() / (1024 * 1024 * 1024)),
+				ApprovalURL:   approvalURL,
+			}
+			errs := s.Notifier.SendAll(r.Context(), notification)
+			for _, e := range errs {
+				slog.Error("notification failed", "error", e)
+			}
+
+			// Return 202 Accepted
+			w.WriteHeader(http.StatusAccepted)
+			writeJSON(w, map[string]interface{}{
+				"status":  "awaiting-approval",
+				"owner":   ownerStr,
+				"message": "Notification sent to owner. Awaiting approval.",
+			})
+			return
+		}
 	}
 
 	now := metav1.Now()
@@ -442,4 +512,164 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, policy)
+}
+
+func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "recommendation not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.Status.State != rightsizingv1alpha1.StateAwaitingApproval {
+		http.Error(w, "recommendation is not awaiting approval", http.StatusConflict)
+		return
+	}
+
+	user := UserInfoFromContext(r.Context())
+	now := metav1.Now()
+	rec.Status.State = rightsizingv1alpha1.StatePending
+	rec.Status.RejectedBy = user.Username
+	rec.Status.RejectedAt = &now
+	rec.Status.RejectionReason = req.Reason
+	rec.Status.Owner = ""
+	rec.Status.ApprovalToken = ""
+	rec.Status.NotifiedAt = nil
+
+	if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+		slog.Error("rejecting recommendation", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, rec)
+}
+
+func (s *Server) handleOwnerApprove(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var req ApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ownerStr := r.Header.Get("X-Approval-Owner")
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "recommendation not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.Status.State != rightsizingv1alpha1.StateAwaitingApproval {
+		http.Error(w, "recommendation is not awaiting approval", http.StatusConflict)
+		return
+	}
+
+	now := metav1.Now()
+	rec.Status.ApprovedBy = ownerStr
+	rec.Status.ApprovedAt = &now
+	rec.Status.ApprovalToken = ""
+
+	if rec.Spec.HotplugCapable {
+		rec.Status.State = rightsizingv1alpha1.StateApplied
+		rec.Status.AppliedAt = &now
+	} else {
+		rec.Status.State = rightsizingv1alpha1.StateAppliedPendingRestart
+		switch req.RestartOption {
+		case "schedule":
+			t, err := time.Parse(time.RFC3339, req.ScheduledAt)
+			if err != nil {
+				http.Error(w, "invalid scheduledAt format", http.StatusBadRequest)
+				return
+			}
+			mt := metav1.NewTime(t)
+			rec.Status.ScheduledRestartAt = &mt
+		case "now":
+			rec.Status.AppliedAt = &now
+		case "later":
+			// Manual restart
+		}
+	}
+
+	if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+		slog.Error("owner-approving recommendation", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, rec)
+}
+
+func (s *Server) handleOwnerReject(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var req struct {
+		Reason string `json:"reason"`
+		Action string `json:"action"` // "reject" or "exclude"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ownerStr := r.Header.Get("X-Approval-Owner")
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "recommendation not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.Status.State != rightsizingv1alpha1.StateAwaitingApproval {
+		http.Error(w, "recommendation is not awaiting approval", http.StatusConflict)
+		return
+	}
+
+	now := metav1.Now()
+
+	if req.Action == "exclude" {
+		// Exclude the VM from rightsizing
+		if s.DynamicClient != nil {
+			vmName := rec.Spec.VirtualMachineRef.Name
+			vmNS := rec.Spec.VirtualMachineRef.Namespace
+			patch := []byte(`{"metadata":{"annotations":{"` + rightsizingv1alpha1.AnnotationExclude + `":"true"}}}`)
+			_, _ = s.DynamicClient.Resource(vmGVR).Namespace(vmNS).Patch(
+				r.Context(), vmName, types.MergePatchType, patch, metav1.PatchOptions{},
+			)
+		}
+	}
+
+	rec.Status.State = rightsizingv1alpha1.StatePending
+	rec.Status.RejectedBy = ownerStr
+	rec.Status.RejectedAt = &now
+	rec.Status.RejectionReason = req.Reason
+	rec.Status.Owner = ""
+	rec.Status.ApprovalToken = ""
+	rec.Status.NotifiedAt = nil
+
+	if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+		slog.Error("owner-rejecting recommendation", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, rec)
 }

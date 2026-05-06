@@ -4,6 +4,9 @@ import (
 	"crypto/tls"
 	"net/http"
 
+	"github.com/kborup-redhat/ovro/internal/approval"
+	"github.com/kborup-redhat/ovro/internal/notifier"
+	"github.com/kborup-redhat/ovro/internal/owner"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -13,21 +16,51 @@ import (
 var vmGVR = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
 
 type Server struct {
-	K8sClient     client.Client
-	Clientset     kubernetes.Interface
-	DynamicClient dynamic.Interface
-	mux           *http.ServeMux
+	K8sClient         client.Client
+	Clientset         kubernetes.Interface
+	DynamicClient     dynamic.Interface
+	OwnerResolver     *owner.Resolver
+	TokenManager      *approval.TokenManager
+	Notifier          *notifier.Dispatcher
+	ApprovalRouteHost string // e.g., "ovro-approval.apps.cluster.example.com"
+	mux               *http.ServeMux
 }
 
-func NewServer(k8sClient client.Client, clientset kubernetes.Interface, dynamicClient dynamic.Interface) *Server {
+func NewServer(k8sClient client.Client, clientset kubernetes.Interface, dynamicClient dynamic.Interface, opts ...ServerOption) *Server {
 	s := &Server{
 		K8sClient:     k8sClient,
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
 		mux:           http.NewServeMux(),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.registerRoutes()
 	return s
+}
+
+// ServerOption configures the Server.
+type ServerOption func(*Server)
+
+// WithOwnerResolver sets the owner resolver for the approval workflow.
+func WithOwnerResolver(r *owner.Resolver) ServerOption {
+	return func(s *Server) { s.OwnerResolver = r }
+}
+
+// WithTokenManager sets the token manager for the approval workflow.
+func WithTokenManager(tm *approval.TokenManager) ServerOption {
+	return func(s *Server) { s.TokenManager = tm }
+}
+
+// WithNotifier sets the notification dispatcher for the approval workflow.
+func WithNotifier(d *notifier.Dispatcher) ServerOption {
+	return func(s *Server) { s.Notifier = d }
+}
+
+// WithApprovalRouteHost sets the external hostname for approval URLs.
+func WithApprovalRouteHost(host string) ServerOption {
+	return func(s *Server) { s.ApprovalRouteHost = host }
 }
 
 func (s *Server) registerRoutes() {
@@ -43,6 +76,11 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/v1/overview", auth(http.HandlerFunc(s.handleOverview)))
 	s.mux.Handle("GET /api/v1/policy", auth(http.HandlerFunc(s.handleGetPolicy)))
 	s.mux.Handle("PUT /api/v1/policy", auth(http.HandlerFunc(s.handleUpdatePolicy)))
+	s.mux.Handle("POST /api/v1/recommendations/{namespace}/{name}/reject", auth(http.HandlerFunc(s.handleReject)))
+
+	// Internal endpoints for the approval proxy (no auth middleware — the proxy validates JWT tokens itself)
+	s.mux.Handle("POST /api/v1/internal/recommendations/{namespace}/{name}/owner-approve", http.HandlerFunc(s.handleOwnerApprove))
+	s.mux.Handle("POST /api/v1/internal/recommendations/{namespace}/{name}/owner-reject", http.HandlerFunc(s.handleOwnerReject))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
