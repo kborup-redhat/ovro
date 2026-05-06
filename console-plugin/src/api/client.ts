@@ -69,7 +69,7 @@ export async function applyRecommendation(
     throw new Error(`API error ${response.status}: ${text}`);
   }
   const data = await response.json();
-  if (response.status === 202) {
+  if (data.status === 'awaiting-approval') {
     return { awaitingApproval: true, owner: data.owner, message: data.message, approvalUrl: data.approvalUrl };
   }
   return { awaitingApproval: false, recommendation: data };
