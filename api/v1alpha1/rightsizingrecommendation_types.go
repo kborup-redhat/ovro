@@ -110,6 +110,7 @@ type RightsizingRecommendationStatus struct {
 	RejectedAt         *metav1.Time        `json:"rejectedAt,omitempty"`
 	RejectionReason    string              `json:"rejectionReason,omitempty"`
 	ServiceNowIncident string              `json:"serviceNowIncident,omitempty"`
+	ReminderSentAt     *metav1.Time        `json:"reminderSentAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

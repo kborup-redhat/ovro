@@ -286,6 +286,37 @@ func TestNewDispatcher_UnknownForwarderType(t *testing.T) {
 	}
 }
 
+func TestDispatcher_SendAllExcept_SkipsExcludedTypes(t *testing.T) {
+	slack := &mockForwarder{name: "slack"}
+	snow := &mockForwarder{name: "servicenow"}
+	smtp := &mockForwarder{name: "smtp"}
+
+	d := &Dispatcher{
+		forwarders: []Forwarder{slack, snow, smtp},
+		log:        logr.Discard(),
+	}
+
+	n := &Notification{
+		VMName:    "test-vm",
+		Namespace: "default",
+	}
+
+	errs := d.SendAllExcept(context.Background(), n, []string{"servicenow"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %d", len(errs))
+	}
+
+	if slack.sendCalls != 1 {
+		t.Errorf("expected slack to be called once, got %d", slack.sendCalls)
+	}
+	if snow.sendCalls != 0 {
+		t.Errorf("expected servicenow to be skipped, got %d calls", snow.sendCalls)
+	}
+	if smtp.sendCalls != 1 {
+		t.Errorf("expected smtp to be called once, got %d", smtp.sendCalls)
+	}
+}
+
 func TestSNMPForwarder_Creation(t *testing.T) {
 	cfg := ForwarderConfig{
 		Type: "snmp",

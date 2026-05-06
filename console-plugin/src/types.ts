@@ -60,6 +60,7 @@ export interface RightsizingRecommendation {
     rejectedAt?: string | null;
     rejectionReason?: string;
     serviceNowIncident?: string;
+    reminderSentAt?: string | null;
   };
 }
 

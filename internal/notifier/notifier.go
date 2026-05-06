@@ -111,9 +111,27 @@ func NewDispatcher(cfg NotifierConfig, secretGetter SecretGetter, log logr.Logge
 
 // SendAll sends the notification to all registered forwarders
 func (d *Dispatcher) SendAll(ctx context.Context, n *Notification) []error {
+	return d.sendFiltered(ctx, n, nil)
+}
+
+// SendAllExcept sends the notification to all registered forwarders except those
+// whose Name() matches one of the excluded types.
+func (d *Dispatcher) SendAllExcept(ctx context.Context, n *Notification, excludeTypes []string) []error {
+	exclude := make(map[string]bool, len(excludeTypes))
+	for _, t := range excludeTypes {
+		exclude[t] = true
+	}
+	return d.sendFiltered(ctx, n, exclude)
+}
+
+func (d *Dispatcher) sendFiltered(ctx context.Context, n *Notification, exclude map[string]bool) []error {
 	var errors []error
 
 	for _, fwd := range d.forwarders {
+		if exclude != nil && exclude[fwd.Name()] {
+			d.log.V(1).Info("skipping forwarder", "forwarder", fwd.Name(), "vm", n.VMName)
+			continue
+		}
 		d.log.V(1).Info("sending notification", "forwarder", fwd.Name(), "vm", n.VMName)
 		if err := fwd.Send(ctx, n); err != nil {
 			d.log.Error(err, "failed to send notification", "forwarder", fwd.Name(), "vm", n.VMName)

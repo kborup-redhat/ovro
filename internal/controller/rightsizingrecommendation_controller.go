@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
 	"github.com/kborup-redhat/ovro/internal/calculator"
+	"github.com/kborup-redhat/ovro/internal/notifier"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,10 +82,12 @@ func (r *RightsizingRecommendationReconciler) getVM(ctx context.Context, name, n
 // RightsizingRecommendation resources.
 type RightsizingRecommendationReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	PromClient PrometheusQuerier
-	Log        logr.Logger
-	DemoMode   bool
+	Scheme            *runtime.Scheme
+	PromClient        PrometheusQuerier
+	Log               logr.Logger
+	DemoMode          bool
+	Notifier          *notifier.Dispatcher
+	ApprovalRouteHost string
 }
 
 // +kubebuilder:rbac:groups=rightsizing.redhatconsulting.io,resources=rightsizingrecommendations,verbs=get;list;watch;create;update;patch;delete
@@ -234,20 +237,45 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 	} else if err != nil {
 		return ctrl.Result{}, fmt.Errorf("fetching recommendation: %w", err)
 	} else {
-		// Check for expired approval tokens
+		// Check for reminder and expiry on awaiting-approval recommendations
 		if rec.Status.State == rightsizingv1alpha1.StateAwaitingApproval {
 			if rec.Status.NotifiedAt != nil {
-				expiryDuration := 7 * 24 * time.Hour
-				if time.Since(rec.Status.NotifiedAt.Time) > expiryDuration {
-					log.Info("Approval token expired, resetting to pending", "vm", req.Name)
+				elapsed := time.Since(rec.Status.NotifiedAt.Time)
+
+				if elapsed > 14*24*time.Hour {
+					log.Info("Approval token expired after 14 days, resetting to pending", "vm", req.Name)
 					rec.Status.State = rightsizingv1alpha1.StatePending
 					rec.Status.Owner = ""
 					rec.Status.ApprovalToken = ""
 					rec.Status.NotifiedAt = nil
+					rec.Status.ReminderSentAt = nil
 					if err := r.Status().Update(ctx, rec); err != nil {
 						return ctrl.Result{}, fmt.Errorf("resetting expired approval: %w", err)
 					}
-					// Continue with normal reconciliation to recalculate
+				} else if elapsed > 7*24*time.Hour && rec.Status.ReminderSentAt == nil {
+					log.Info("Sending 7-day reminder notification", "vm", req.Name, "owner", rec.Status.Owner)
+					if r.Notifier != nil {
+						n := &notifier.Notification{
+							VMName:        rec.Spec.VirtualMachineRef.Name,
+							Namespace:     rec.Spec.VirtualMachineRef.Namespace,
+							Owner:         rec.Status.Owner,
+							Direction:     string(rec.Spec.Direction),
+							CurrentCPU:    rec.Spec.Current.CPU.Cores,
+							CurrentMemory: int32(rec.Spec.Current.Memory.Value() / (1024 * 1024 * 1024)),
+							RecCPU:        rec.Spec.Recommended.CPU.Cores,
+							RecMemory:     int32(rec.Spec.Recommended.Memory.Value() / (1024 * 1024 * 1024)),
+							ApprovalURL:   fmt.Sprintf("https://%s/approve?token=%s", r.ApprovalRouteHost, rec.Status.ApprovalToken),
+						}
+						errs := r.Notifier.SendAllExcept(ctx, n, []string{"servicenow"})
+						if len(errs) > 0 {
+							log.Error(errs[0], "Some reminder notifications failed", "errorCount", len(errs))
+						}
+					}
+					now := metav1.Now()
+					rec.Status.ReminderSentAt = &now
+					if err := r.Status().Update(ctx, rec); err != nil {
+						return ctrl.Result{}, fmt.Errorf("updating reminder status: %w", err)
+					}
 				}
 			}
 		}

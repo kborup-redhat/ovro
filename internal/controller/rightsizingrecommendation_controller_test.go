@@ -19,11 +19,12 @@ import (
 )
 
 type mockPrometheusClient struct {
-	cpuP95    float64
-	memP95    float64
-	cpuMax    float64
-	memMax    float64
-	shouldErr bool
+	cpuP95     float64
+	memP95     float64
+	cpuMax     float64
+	memMax     float64
+	dataPoints int
+	shouldErr  bool
 }
 
 func (m *mockPrometheusClient) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*controller.VMUtilization, error) {
@@ -35,6 +36,7 @@ func (m *mockPrometheusClient) GetVMUtilization(ctx context.Context, vmName, nam
 		MemoryP95Percent: m.memP95,
 		CPUMaxPercent:    m.cpuMax,
 		MemoryMaxPercent: m.memMax,
+		DataPoints:       m.dataPoints,
 	}, nil
 }
 
@@ -86,10 +88,11 @@ func TestReconcile_CreatesRecommendation(t *testing.T) {
 		Build()
 
 	promClient := &mockPrometheusClient{
-		cpuP95: 28.3,
-		memP95: 41.7,
-		cpuMax: 62.1,
-		memMax: 58.4,
+		cpuP95:     28.3,
+		memP95:     41.7,
+		cpuMax:     62.1,
+		memMax:     58.4,
+		dataPoints: 10080,
 	}
 
 	reconciler := &controller.RightsizingRecommendationReconciler{
