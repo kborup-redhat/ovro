@@ -325,7 +325,7 @@ func (p *ApprovalProxy) handlePostApprove(w http.ResponseWriter, r *http.Request
 
 // fetchRecommendation retrieves a recommendation from the backend API.
 func (p *ApprovalProxy) fetchRecommendation(namespace, name string) (*backendRecommendation, error) {
-	url := fmt.Sprintf("%s/api/v1/recommendations/%s/%s", p.backendURL, namespace, name)
+	url := fmt.Sprintf("%s/api/v1/internal/recommendations/%s/%s", p.backendURL, namespace, name)
 	resp, err := p.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)

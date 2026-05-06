@@ -85,6 +85,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/v1/recommendations/{namespace}/{name}/reject", auth(http.HandlerFunc(s.handleReject)))
 
 	// Internal endpoints for the approval proxy (no auth middleware — the proxy validates JWT tokens itself)
+	s.mux.Handle("GET /api/v1/internal/recommendations/{namespace}/{name}", http.HandlerFunc(s.handleGetRecommendation))
 	s.mux.Handle("POST /api/v1/internal/recommendations/{namespace}/{name}/owner-approve", http.HandlerFunc(s.handleOwnerApprove))
 	s.mux.Handle("POST /api/v1/internal/recommendations/{namespace}/{name}/owner-reject", http.HandlerFunc(s.handleOwnerReject))
 }
