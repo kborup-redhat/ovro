@@ -1,0 +1,16 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovro-approval
+  namespace: ovro-system
+  labels:
+    app: ovro-approval-proxy
+spec:
+  to:
+    kind: Service
+    name: ovro-approval-proxy
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt

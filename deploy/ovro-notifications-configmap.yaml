@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovro-notifications
+  namespace: ovro-system
+  labels:
+    app: ovro
+data:
+  config.yaml: |
+    forwarders:
+      - type: slack
+        enabled: false
+        channel: "#vm-rightsizing"
+        secretRef: ovro-slack-credentials
+      - type: teams
+        enabled: false
+        secretRef: ovro-teams-credentials
+      - type: smtp
+        enabled: false
+        from: "ovro-noreply@example.com"
+        to: "{{owner}}"
+        smtpServer: "smtp.example.com"
+        smtpPort: 587
+        secretRef: ovro-smtp-credentials
+      - type: snmp
+        enabled: false
+        host: "snmp-trap-receiver.example.com"
+        port: 162
+        community: "public"
+      - type: pagerduty
+        enabled: false
+        secretRef: ovro-pagerduty-credentials
+      - type: rocketchat
+        enabled: false
+        serverUrl: "https://chat.example.com"
+        channel: "#vm-ops"
+        secretRef: ovro-rocketchat-credentials
+      - type: servicenow
+        enabled: false
+        instanceUrl: "https://example.service-now.com"
+        assignmentGroup: "VM Operations"
+        category: "Infrastructure"
+        secretRef: ovro-servicenow-credentials
