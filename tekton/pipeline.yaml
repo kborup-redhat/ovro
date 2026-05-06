@@ -100,8 +100,36 @@ spec:
         - name: source
           workspace: workspace
 
+    - name: build-approval-proxy
+      runAfter: [build-backend]
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton-catalog-tasks
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: version
+            value: "0.8"
+      params:
+        - name: IMAGE
+          value: $(params.image-registry)/ovro-approval-proxy:$(params.git-revision)
+        - name: DOCKERFILE
+          value: Dockerfile.approval-proxy
+        - name: CONTEXT
+          value: .
+        - name: TLSVERIFY
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: workspace
+
     - name: deploy
-      runAfter: [build-plugin]
+      runAfter: [build-plugin, build-approval-proxy]
       taskRef:
         kind: Task
         name: ovro-deploy
@@ -110,6 +138,8 @@ spec:
           value: $(params.image-registry)/ovro-backend:$(params.git-revision)
         - name: plugin-image
           value: $(params.image-registry)/ovro-console-plugin:$(params.git-revision)
+        - name: approval-proxy-image
+          value: $(params.image-registry)/ovro-approval-proxy:$(params.git-revision)
       workspaces:
         - name: source
           workspace: workspace

@@ -41,12 +41,21 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
 	"github.com/kborup-redhat/ovro/internal/apiserver"
 	"github.com/kborup-redhat/ovro/internal/applier"
+	"github.com/kborup-redhat/ovro/internal/approval"
 	"github.com/kborup-redhat/ovro/internal/controller"
+	"github.com/kborup-redhat/ovro/internal/notifier"
+	"github.com/kborup-redhat/ovro/internal/owner"
 	"github.com/kborup-redhat/ovro/internal/prometheus"
 	// +kubebuilder:scaffold:imports
+
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -107,6 +116,18 @@ func (r *apiServerRunnable) Start(ctx context.Context) error {
 	}
 }
 
+type k8sSecretGetter struct {
+	client client.Client
+}
+
+func (g *k8sSecretGetter) GetSecretData(ctx context.Context, name, namespace string) (map[string][]byte, error) {
+	secret := &corev1.Secret{}
+	if err := g.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
+		return nil, err
+	}
+	return secret.Data, nil
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -118,6 +139,9 @@ func main() {
 	var enableHTTP2 bool
 	var apiAddr string
 	var prometheusURL string
+	var approvalRouteHost string
+	var signingKeyPath string
+	var notificationConfigPath string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -140,11 +164,23 @@ func main() {
 	flag.StringVar(&prometheusURL, "prometheus-url",
 		"https://thanos-querier.openshift-monitoring.svc:9091",
 		"The Prometheus/Thanos URL.")
+	flag.StringVar(&approvalRouteHost, "approval-route-host", "", "Hostname of the approval proxy route")
+	flag.StringVar(&signingKeyPath, "signing-key-path", "", "Path to JWT signing key file")
+	flag.StringVar(&notificationConfigPath, "notification-config", "/etc/ovro/notifications/config.yaml",
+		"Path to notification config file")
 	opts := zap.Options{
 		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	// Check for environment variable overrides
+	if envHost := os.Getenv("OVRO_APPROVAL_ROUTE_HOST"); envHost != "" {
+		approvalRouteHost = envHost
+	}
+	if envKey := os.Getenv("SIGNING_KEY_PATH"); envKey != "" {
+		signingKeyPath = envKey
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -331,8 +367,55 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize approval workflow components (optional — skipped if not configured)
+	var serverOpts []apiserver.ServerOption
+
+	if signingKeyPath != "" {
+		signingKey, err := os.ReadFile(signingKeyPath)
+		if err != nil {
+			setupLog.Error(err, "failed to read signing key")
+			os.Exit(1)
+		}
+
+		tokenMgr := approval.NewTokenManager(signingKey)
+		ownerRes := &owner.Resolver{Client: mgr.GetClient()}
+
+		serverOpts = append(serverOpts,
+			apiserver.WithTokenManager(tokenMgr),
+			apiserver.WithOwnerResolver(ownerRes),
+		)
+
+		if approvalRouteHost != "" {
+			serverOpts = append(serverOpts, apiserver.WithApprovalRouteHost(approvalRouteHost))
+		}
+
+		// Load notification config
+		if _, err := os.Stat(notificationConfigPath); err == nil {
+			configData, err := os.ReadFile(notificationConfigPath)
+			if err != nil {
+				setupLog.Error(err, "failed to read notification config")
+				os.Exit(1)
+			}
+
+			var cfg notifier.NotifierConfig
+			if err := yaml.Unmarshal(configData, &cfg); err != nil {
+				setupLog.Error(err, "failed to parse notification config")
+				os.Exit(1)
+			}
+
+			secretGetter := &k8sSecretGetter{client: mgr.GetClient()}
+			dispatcher, err := notifier.NewDispatcher(cfg, secretGetter, ctrl.Log.WithName("notifier"))
+			if err != nil {
+				setupLog.Error(err, "failed to create notification dispatcher")
+				os.Exit(1)
+			}
+			serverOpts = append(serverOpts, apiserver.WithNotifier(dispatcher))
+			setupLog.Info("Notification forwarders configured")
+		}
+	}
+
 	// Register the REST API server with the manager for graceful lifecycle management.
-	apiSrv := apiserver.NewServer(mgr.GetClient(), clientset, dynamicClient)
+	apiSrv := apiserver.NewServer(mgr.GetClient(), clientset, dynamicClient, serverOpts...)
 	if err := mgr.Add(&apiServerRunnable{
 		srv:      apiSrv,
 		addr:     apiAddr,
