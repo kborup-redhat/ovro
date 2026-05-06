@@ -2,6 +2,7 @@ package prometheus
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,6 +47,11 @@ func NewClient(baseURL string) *Client {
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, //nolint:gosec // cluster-internal Thanos endpoint
+				},
+			},
 		},
 	}
 }
