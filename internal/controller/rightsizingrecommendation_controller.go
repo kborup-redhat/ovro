@@ -121,6 +121,7 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 	annotations := vm.GetAnnotations()
 	if annotations[rightsizingv1alpha1.AnnotationExclude] == "true" {
 		log.Info("VM is excluded from rightsizing, skipping")
+		r.deleteExistingRecommendation(ctx, req.Name, req.Namespace)
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
@@ -150,6 +151,7 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 		minDataPoints := 7 * 24 * 60 / 2
 		if utilization.DataPoints < minDataPoints {
 			log.Info("Insufficient metrics data, skipping VM", "dataPoints", utilization.DataPoints, "required", minDataPoints)
+			r.deleteExistingRecommendation(ctx, req.Name, req.Namespace)
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 
@@ -173,6 +175,7 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 		result = calculator.Analyze(input)
 		if result == nil {
 			log.Info("No recommendation needed for VM")
+			r.deleteExistingRecommendation(ctx, req.Name, req.Namespace)
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 	}
@@ -275,6 +278,18 @@ func (r *RightsizingRecommendationReconciler) SetupWithManager(mgr ctrl.Manager)
 func defaultPolicy() *rightsizingv1alpha1.RightsizingPolicy {
 	return &rightsizingv1alpha1.RightsizingPolicy{
 		Spec: rightsizingv1alpha1.DefaultPolicySpec(),
+	}
+}
+
+func (r *RightsizingRecommendationReconciler) deleteExistingRecommendation(ctx context.Context, vmName, namespace string) {
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	recName := types.NamespacedName{Name: "vm-" + vmName, Namespace: namespace}
+	if err := r.Get(ctx, recName, rec); err == nil {
+		if rec.Status.State == rightsizingv1alpha1.StateApplied ||
+			rec.Status.State == rightsizingv1alpha1.StateAppliedPendingRestart {
+			return
+		}
+		_ = r.Delete(ctx, rec)
 	}
 }
 
