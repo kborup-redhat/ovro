@@ -6,7 +6,7 @@ import {
   RestartOption,
 } from '../types';
 
-const API_BASE = '/api/plugins/ovro-console-plugin/api/v1';
+const API_BASE = '/api/proxy/plugin/ovro-console-plugin/ovro-backend/api/v1';
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {

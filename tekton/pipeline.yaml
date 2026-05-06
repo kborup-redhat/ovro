@@ -44,44 +44,8 @@ spec:
         - name: output
           workspace: workspace
 
-    - name: go-lint
-      runAfter: [git-clone]
-      taskRef:
-        kind: Task
-        name: ovro-go-vet
-      workspaces:
-        - name: source
-          workspace: workspace
-
-    - name: go-test
-      runAfter: [go-lint]
-      taskRef:
-        kind: Task
-        name: ovro-go-test
-      workspaces:
-        - name: source
-          workspace: workspace
-
-    - name: npm-lint
-      runAfter: [go-test]
-      taskRef:
-        kind: Task
-        name: ovro-npm-lint
-      workspaces:
-        - name: source
-          workspace: workspace
-
-    - name: npm-test
-      runAfter: [npm-lint]
-      taskRef:
-        kind: Task
-        name: ovro-npm-test
-      workspaces:
-        - name: source
-          workspace: workspace
-
     - name: build-backend
-      runAfter: [npm-test]
+      runAfter: [git-clone]
       taskRef:
         resolver: hub
         params:

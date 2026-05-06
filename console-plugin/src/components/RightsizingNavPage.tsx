@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import {
+  Page,
   PageSection,
+  PageSectionVariants,
   Tab,
   Tabs,
   TabTitleText,
@@ -18,25 +20,23 @@ const RightsizingNavPage: React.FC = () => {
   const [dialogRec, setDialogRec] = useState<RightsizingRecommendation | null>(null);
 
   return (
-    <>
-      <PageSection>
-        <Title headingLevel="h1">Rightsizing</Title>
+    <Page>
+      <PageSection variant={PageSectionVariants.light}>
+        <Title headingLevel="h1" size="lg">Rightsizing</Title>
       </PageSection>
-      <PageSection type="tabs">
+      <PageSection variant={PageSectionVariants.light} type="tabs" hasShadowBottom>
         <Tabs activeKey={activeTab} onSelect={(_e, k) => setActiveTab(k as number)}>
-          <Tab eventKey={0} title={<TabTitleText>Overview</TabTitleText>}>
-            <OverviewPage />
-          </Tab>
-          <Tab eventKey={1} title={<TabTitleText>Recommendations</TabTitleText>}>
-            <RecommendationsPage onRightsize={setDialogRec} />
-          </Tab>
-          <Tab eventKey={2} title={<TabTitleText>Excluded VMs</TabTitleText>}>
-            <ExcludedVMsPage />
-          </Tab>
-          <Tab eventKey={3} title={<TabTitleText>Policy</TabTitleText>}>
-            <PolicyPage />
-          </Tab>
+          <Tab eventKey={0} title={<TabTitleText>Overview</TabTitleText>} />
+          <Tab eventKey={1} title={<TabTitleText>Recommendations</TabTitleText>} />
+          <Tab eventKey={2} title={<TabTitleText>Excluded VMs</TabTitleText>} />
+          <Tab eventKey={3} title={<TabTitleText>Policy</TabTitleText>} />
         </Tabs>
+      </PageSection>
+      <PageSection variant={PageSectionVariants.default} isFilled>
+        {activeTab === 0 && <OverviewPage />}
+        {activeTab === 1 && <RecommendationsPage onRightsize={setDialogRec} />}
+        {activeTab === 2 && <ExcludedVMsPage />}
+        {activeTab === 3 && <PolicyPage />}
       </PageSection>
 
       {dialogRec && (
@@ -47,7 +47,7 @@ const RightsizingNavPage: React.FC = () => {
           onApplied={() => setDialogRec(null)}
         />
       )}
-    </>
+    </Page>
   );
 };
 

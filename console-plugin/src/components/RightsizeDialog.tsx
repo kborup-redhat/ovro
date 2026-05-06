@@ -3,9 +3,6 @@ import {
   Alert,
   Button,
   Modal,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
   ModalVariant,
   Radio,
   Stack,
@@ -57,84 +54,82 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
 
   return (
     <Modal
+      title={`Rightsize: ${rec.spec.virtualMachineRef.name}`}
       variant={ModalVariant.medium}
       isOpen={isOpen}
       onClose={onClose}
-    >
-      <ModalHeader title={`Rightsize: ${rec.spec.virtualMachineRef.name}`} />
-      <ModalBody>
-        <Stack hasGutter>
-          {isHotplug ? (
-            <StackItem>
-              <Alert variant="info" isInline title="This VM supports CPU/memory hotplug. Changes will be applied live without downtime." />
-            </StackItem>
-          ) : (
-            <StackItem>
-              <Alert variant="warning" isInline title="This VM does not support hotplug. A restart is required to apply changes." />
-            </StackItem>
-          )}
-
-          <StackItem>
-            <Table aria-label="Changes" variant="compact">
-              <Thead>
-                <Tr><Th>Resource</Th><Th>Current</Th><Th /><Th>New</Th><Th>Saving</Th></Tr>
-              </Thead>
-              <Tbody>
-                <Tr>
-                  <Td>CPU Cores</Td>
-                  <Td>{rec.spec.current.cpu.cores}</Td>
-                  <Td>&rarr;</Td>
-                  <Td>{rec.spec.recommended.cpu.cores}</Td>
-                  <Td>{rec.spec.savings.cpu} cores</Td>
-                </Tr>
-                <Tr>
-                  <Td>Memory</Td>
-                  <Td>{rec.spec.current.memory}</Td>
-                  <Td>&rarr;</Td>
-                  <Td>{rec.spec.recommended.memory}</Td>
-                  <Td>{rec.spec.savings.memory}</Td>
-                </Tr>
-              </Tbody>
-            </Table>
-          </StackItem>
-
-          <StackItem>
-            <p>Based on {rec.spec.metrics.lookbackDays}-day analysis: CPU P95: {rec.spec.metrics.cpuP95Percent}%, Memory P95: {rec.spec.metrics.memoryP95Percent}%</p>
-          </StackItem>
-
-          {!isHotplug && (
-            <StackItem>
-              <Stack hasGutter>
-                <StackItem><strong>When should the VM restart?</strong></StackItem>
-                <StackItem>
-                  <Radio id="restart-now" name="restart" label="Restart now" description="Apply changes and restart immediately" isChecked={restartOption === 'now'} onChange={() => setRestartOption('now')} />
-                </StackItem>
-                <StackItem>
-                  <Radio id="restart-schedule" name="restart" label="Schedule restart" description="Pick a date and time" isChecked={restartOption === 'schedule'} onChange={() => setRestartOption('schedule')} />
-                  {restartOption === 'schedule' && (
-                    <TextInput type="datetime-local" value={scheduledAt} onChange={(_e, v) => setScheduledAt(v)} aria-label="Scheduled restart time" />
-                  )}
-                </StackItem>
-                <StackItem>
-                  <Radio id="restart-later" name="restart" label="Restart later" description="Apply spec changes now — restart manually during your change window" isChecked={restartOption === 'later'} onChange={() => setRestartOption('later')} />
-                </StackItem>
-              </Stack>
-            </StackItem>
-          )}
-
-          <StackItem>
-            <p>A revert option will be available for 30 days after applying.</p>
-          </StackItem>
-
-          {error && <StackItem><Alert variant="danger" isInline title={error} /></StackItem>}
-        </Stack>
-      </ModalBody>
-      <ModalFooter>
+      actions={[
         <Button key="apply" variant="primary" onClick={handleApply} isLoading={applying} isDisabled={applying}>
           {isHotplug ? 'Apply Now (Live)' : 'Apply Changes'}
-        </Button>
-        <Button key="cancel" variant="link" onClick={onClose}>Cancel</Button>
-      </ModalFooter>
+        </Button>,
+        <Button key="cancel" variant="link" onClick={onClose}>Cancel</Button>,
+      ]}
+    >
+      <Stack hasGutter>
+        {isHotplug ? (
+          <StackItem>
+            <Alert variant="info" isInline title="This VM supports CPU/memory hotplug. Changes will be applied live without downtime." />
+          </StackItem>
+        ) : (
+          <StackItem>
+            <Alert variant="warning" isInline title="This VM does not support hotplug. A restart is required to apply changes." />
+          </StackItem>
+        )}
+
+        <StackItem>
+          <Table aria-label="Changes" variant="compact">
+            <Thead>
+              <Tr><Th>Resource</Th><Th>Current</Th><Th /><Th>New</Th><Th>Saving</Th></Tr>
+            </Thead>
+            <Tbody>
+              <Tr>
+                <Td>CPU Cores</Td>
+                <Td>{rec.spec.current.cpu.cores}</Td>
+                <Td>&rarr;</Td>
+                <Td>{rec.spec.recommended.cpu.cores}</Td>
+                <Td>{rec.spec.savings.cpu} cores</Td>
+              </Tr>
+              <Tr>
+                <Td>Memory</Td>
+                <Td>{rec.spec.current.memory}</Td>
+                <Td>&rarr;</Td>
+                <Td>{rec.spec.recommended.memory}</Td>
+                <Td>{rec.spec.savings.memory}</Td>
+              </Tr>
+            </Tbody>
+          </Table>
+        </StackItem>
+
+        <StackItem>
+          <p>Based on {rec.spec.metrics.lookbackDays}-day analysis: CPU P95: {rec.spec.metrics.cpuP95Percent}%, Memory P95: {rec.spec.metrics.memoryP95Percent}%</p>
+        </StackItem>
+
+        {!isHotplug && (
+          <StackItem>
+            <Stack hasGutter>
+              <StackItem><strong>When should the VM restart?</strong></StackItem>
+              <StackItem>
+                <Radio id="restart-now" name="restart" label="Restart now" description="Apply changes and restart immediately" isChecked={restartOption === 'now'} onChange={() => setRestartOption('now')} />
+              </StackItem>
+              <StackItem>
+                <Radio id="restart-schedule" name="restart" label="Schedule restart" description="Pick a date and time" isChecked={restartOption === 'schedule'} onChange={() => setRestartOption('schedule')} />
+                {restartOption === 'schedule' && (
+                  <TextInput type="datetime-local" value={scheduledAt} onChange={(_e, v) => setScheduledAt(v)} aria-label="Scheduled restart time" />
+                )}
+              </StackItem>
+              <StackItem>
+                <Radio id="restart-later" name="restart" label="Restart later" description="Apply spec changes now — restart manually during your change window" isChecked={restartOption === 'later'} onChange={() => setRestartOption('later')} />
+              </StackItem>
+            </Stack>
+          </StackItem>
+        )}
+
+        <StackItem>
+          <p>A revert option will be available for 30 days after applying.</p>
+        </StackItem>
+
+        {error && <StackItem><Alert variant="danger" isInline title={error} /></StackItem>}
+      </Stack>
     </Modal>
   );
 };

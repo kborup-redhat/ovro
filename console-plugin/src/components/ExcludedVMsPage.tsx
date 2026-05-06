@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Bullseye,
   Button,
   EmptyState,
   EmptyStateBody,
-  PageSection,
+  EmptyStateHeader,
+  EmptyStateIcon,
   SearchInput,
   Spinner,
   Toolbar,
   ToolbarContent,
   ToolbarItem,
 } from '@patternfly/react-core';
+import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { removeExclusion } from '../api/client';
 
@@ -25,9 +28,6 @@ export const ExcludedVMsPage: React.FC = () => {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    // In a real implementation, this would use useK8sWatchResource from the console SDK
-    // to watch VirtualMachines with the exclude annotation.
-    // For now, we use a placeholder that completes loading.
     setLoading(false);
   }, []);
 
@@ -41,7 +41,11 @@ export const ExcludedVMsPage: React.FC = () => {
   };
 
   if (loading) {
-    return <PageSection><Spinner /> Loading...</PageSection>;
+    return (
+      <Bullseye>
+        <Spinner />
+      </Bullseye>
+    );
   }
 
   const filtered = vms.filter((vm) =>
@@ -50,16 +54,15 @@ export const ExcludedVMsPage: React.FC = () => {
 
   if (vms.length === 0) {
     return (
-      <PageSection>
-        <EmptyState titleText="No excluded VMs" headingLevel="h2">
-          <EmptyStateBody>No VMs are currently excluded from rightsizing monitoring.</EmptyStateBody>
-        </EmptyState>
-      </PageSection>
+      <EmptyState>
+        <EmptyStateHeader titleText="No excluded VMs" headingLevel="h2" icon={<EmptyStateIcon icon={CubesIcon} />} />
+        <EmptyStateBody>No VMs are currently excluded from rightsizing monitoring.</EmptyStateBody>
+      </EmptyState>
     );
   }
 
   return (
-    <PageSection>
+    <>
       <Toolbar>
         <ToolbarContent>
           <ToolbarItem>
@@ -96,7 +99,6 @@ export const ExcludedVMsPage: React.FC = () => {
           ))}
         </Tbody>
       </Table>
-      <p>{filtered.length} VMs excluded from monitoring</p>
-    </PageSection>
+    </>
   );
 };

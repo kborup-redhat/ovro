@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
+  Bullseye,
   Button,
   EmptyState,
   EmptyStateBody,
+  EmptyStateHeader,
+  EmptyStateIcon,
   Label,
-  PageSection,
   SearchInput,
   Spinner,
   Toolbar,
@@ -13,6 +15,7 @@ import {
   ToolbarItem,
   Tooltip,
 } from '@patternfly/react-core';
+import { SearchIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { RightsizingRecommendation } from '../types';
 import { listRecommendations, revertRecommendation } from '../api/client';
@@ -46,7 +49,11 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
   };
 
   if (loading) {
-    return <PageSection><Spinner /> Loading...</PageSection>;
+    return (
+      <Bullseye>
+        <Spinner />
+      </Bullseye>
+    );
   }
 
   const filtered = recs.filter((r) =>
@@ -55,11 +62,10 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
 
   if (filtered.length === 0 && !search && !error) {
     return (
-      <PageSection>
-        <EmptyState titleText="No recommendations" headingLevel="h2">
-          <EmptyStateBody>No rightsizing recommendations found.</EmptyStateBody>
-        </EmptyState>
-      </PageSection>
+      <EmptyState>
+        <EmptyStateHeader titleText="No recommendations" headingLevel="h2" icon={<EmptyStateIcon icon={SearchIcon} />} />
+        <EmptyStateBody>No rightsizing recommendations found. VMs will appear here once metrics have been collected.</EmptyStateBody>
+      </EmptyState>
     );
   }
 
@@ -70,7 +76,7 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
       case 'applied-pending-restart':
         return (
           <Tooltip content="VM will restart at the scheduled time">
-            <Button variant="warning" size="sm" isDisabled>Restart</Button>
+            <Button variant="warning" size="sm" isDisabled>Restart Pending</Button>
           </Tooltip>
         );
       case 'applied':
@@ -97,7 +103,7 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
   };
 
   return (
-    <PageSection>
+    <>
       {error && (
         <Alert variant="danger" title="Error" isInline style={{ marginBottom: '1rem' }}>
           {error}
@@ -136,8 +142,8 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
               <Td>{rec.spec.virtualMachineRef.name}</Td>
               <Td>{rec.metadata.namespace}</Td>
               <Td>{directionLabel(rec.spec.direction)}</Td>
-              <Td>{rec.spec.current.cpu.cores} → {rec.spec.recommended.cpu.cores}</Td>
-              <Td>{rec.spec.current.memory} → {rec.spec.recommended.memory}</Td>
+              <Td>{rec.spec.current.cpu.cores} &rarr; {rec.spec.recommended.cpu.cores}</Td>
+              <Td>{rec.spec.current.memory} &rarr; {rec.spec.recommended.memory}</Td>
               <Td>{rec.spec.metrics.cpuP95Percent}%</Td>
               <Td>{rec.spec.metrics.memoryP95Percent}%</Td>
               <Td>{rec.spec.hotplugCapable ? 'Yes' : 'No'}</Td>
@@ -147,6 +153,6 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
           ))}
         </Tbody>
       </Table>
-    </PageSection>
+    </>
   );
 };
