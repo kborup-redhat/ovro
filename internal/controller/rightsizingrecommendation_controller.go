@@ -234,9 +234,28 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 	} else if err != nil {
 		return ctrl.Result{}, fmt.Errorf("fetching recommendation: %w", err)
 	} else {
-		// Skip update if already applied.
+		// Check for expired approval tokens
+		if rec.Status.State == rightsizingv1alpha1.StateAwaitingApproval {
+			if rec.Status.NotifiedAt != nil {
+				expiryDuration := 7 * 24 * time.Hour
+				if time.Since(rec.Status.NotifiedAt.Time) > expiryDuration {
+					log.Info("Approval token expired, resetting to pending", "vm", req.Name)
+					rec.Status.State = rightsizingv1alpha1.StatePending
+					rec.Status.Owner = ""
+					rec.Status.ApprovalToken = ""
+					rec.Status.NotifiedAt = nil
+					if err := r.Status().Update(ctx, rec); err != nil {
+						return ctrl.Result{}, fmt.Errorf("resetting expired approval: %w", err)
+					}
+					// Continue with normal reconciliation to recalculate
+				}
+			}
+		}
+
+		// Skip update if already applied or awaiting approval.
 		if rec.Status.State == rightsizingv1alpha1.StateApplied ||
-			rec.Status.State == rightsizingv1alpha1.StateAppliedPendingRestart {
+			rec.Status.State == rightsizingv1alpha1.StateAppliedPendingRestart ||
+			rec.Status.State == rightsizingv1alpha1.StateAwaitingApproval {
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 
@@ -286,7 +305,8 @@ func (r *RightsizingRecommendationReconciler) deleteExistingRecommendation(ctx c
 	recName := types.NamespacedName{Name: "vm-" + vmName, Namespace: namespace}
 	if err := r.Get(ctx, recName, rec); err == nil {
 		if rec.Status.State == rightsizingv1alpha1.StateApplied ||
-			rec.Status.State == rightsizingv1alpha1.StateAppliedPendingRestart {
+			rec.Status.State == rightsizingv1alpha1.StateAppliedPendingRestart ||
+			rec.Status.State == rightsizingv1alpha1.StateAwaitingApproval {
 			return
 		}
 		_ = r.Delete(ctx, rec)
