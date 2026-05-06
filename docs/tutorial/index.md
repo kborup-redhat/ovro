@@ -3,100 +3,113 @@ title: "Introduction"
 order: 0
 ---
 
-# Welcome to the OVRO Tutorial Series
+# OVRO - OpenShift Virtualization Rightsizing Operator
 
-If you have ever managed a fleet of virtual machines on OpenShift, you already know the problem: **VM sprawl**. Teams request generous CPU and memory allocations "just in case," workloads shift over time, and before long a significant portion of your cluster capacity is reserved but never actually used. The cost -- in hardware, energy, and licensing -- adds up fast.
+Welcome to the OVRO tutorial! This guide walks you through the architecture and implementation of a Kubernetes operator that analyses KubeVirt virtual machine resource utilisation and recommends CPU/memory rightsizing changes. By the end, you'll understand how every component works together, from metrics collection through the approval workflow to the OpenShift Console UI.
 
-The **OpenShift Virtualization Rightsizing Operator (OVRO)** exists to solve exactly this. It continuously monitors the real-world utilisation of every KubeVirt `VirtualMachine` in your cluster, calculates data-driven recommendations for right-sizing CPU and memory, and surfaces those recommendations through a polished OpenShift Console plugin so platform teams can act on them with confidence.
+## What Does OVRO Do?
 
-No more guesswork. No more spreadsheets. Just *measured utilisation* turned into *actionable recommendations*.
+Imagine you're running dozens of virtual machines on OpenShift. Some VMs were provisioned with 8 CPU cores but only use 2. Others are maxing out their memory. OVRO acts like a resource advisor: it watches your VMs, queries Prometheus for historical usage data, computes whether each VM is over- or under-provisioned, and presents actionable recommendations through the OpenShift Console.
 
----
-
-## Project Overview
-
-OVRO is a Kubernetes operator built with **Go** and **controller-runtime** that pairs a backend recommendation engine with a **React/PatternFly** frontend delivered as an OpenShift Console dynamic plugin. On the backend, a set of controllers watch `VirtualMachine` objects, query **Prometheus** (or **Thanos**) for historical CPU and memory metrics, and feed those metrics into a rightsizing calculator that uses a **P95 + headroom algorithm** to produce safe, defensible resize recommendations. Those recommendations are persisted as `RightsizingRecommendation` Custom Resources. A dedicated restart controller can optionally apply changes and restart affected VMs automatically, governed by `RightsizingPolicy` Custom Resources that give administrators fine-grained control.
-
-On the frontend, an RBAC-enforced REST API exposes recommendations, policies, and exclusion lists to the Console plugin, which provides four main views: **Overview**, **Recommendations**, **Excluded VMs**, and **Policy**. Authentication flows through Kubernetes `TokenReview` and `SubjectAccessReview`, so every API call respects the caller's existing OpenShift permissions.
-
----
+Cluster administrators can then apply changes directly (with live hotplug when supported), schedule restarts for non-hotplug VMs, or route changes through an approval workflow where VM owners review and approve recommendations via a signed link.
 
 ## Architecture Overview
 
-The diagram below shows how the major components interact. The operator controllers sit at the centre, bridging metric collection, recommendation storage, and the Console plugin.
-
 ```mermaid
 graph TD
-    VM[KubeVirt VirtualMachine] -->|watches| RC[Recommendation Controller]
-    RC -->|queries| PC[Prometheus Client]
-    PC -->|fetches metrics| PROM[Prometheus / Thanos]
-    RC -->|runs| CALC[Rightsizing Calculator]
-    RC -->|creates/updates| REC[RightsizingRecommendation CR]
-    POL[RightsizingPolicy CR] -->|configures| RC
-    REC -->|watches| RSTC[Restart Controller]
-    RSTC -->|triggers restart| APP[VM Applier]
-    APP -->|patches| VM
-    CONSOLE[Console Plugin] -->|calls| APIC[API Client]
-    APIC -->|HTTP| API[REST API Server]
-    API -->|validates| AUTH[Auth Middleware]
-    AUTH -->|TokenReview + SAR| K8S[Kubernetes API]
-    API -->|reads/writes| REC
-    API -->|reads/writes| POL
-    API -->|patches via| APP
+    subgraph "Data Collection"
+        A[Prometheus / Thanos] -->|CPU & memory metrics| B[Prometheus Client]
+    end
+
+    subgraph "Analysis"
+        B --> C[Calculator]
+        C --> D[Recommendation Controller]
+    end
+
+    subgraph "Custom Resources"
+        D -->|creates/updates| E[RightsizingRecommendation CR]
+        F[RightsizingPolicy CR] -->|configures| D
+    end
+
+    subgraph "API Layer"
+        E --> G[REST API Server]
+        G -->|RBAC via| H[Auth Middleware]
+    end
+
+    subgraph "Approval Workflow"
+        G -->|generates JWT| I[Token Manager]
+        G -->|resolves owner| J[Owner Resolver]
+        G -->|sends notifications| K[Notification Dispatcher]
+        K --> K1[Slack]
+        K --> K2[Teams]
+        K --> K3[SMTP]
+        K --> K4[PagerDuty]
+        K --> K5[ServiceNow]
+        I --> L[Approval Proxy]
+        L -->|approve/reject| G
+    end
+
+    subgraph "Apply Changes"
+        G -->|patches VM| M[VM Applier]
+        N[Restart Controller] -->|scheduled restart| M
+    end
+
+    subgraph "Frontend"
+        G --> O[Console Plugin]
+        O -->|OpenShift Console| P[Browser]
+    end
 ```
-
-**Key data flows:**
-
-- The *Recommendation Controller* watches every `VirtualMachine`, pulls utilisation metrics from Prometheus, runs the rightsizing calculator, and writes `RightsizingRecommendation` CRs.
-- The *Restart Controller* watches recommendations and, when policy allows, patches the VM spec and triggers a controlled restart via the *VM Applier*.
-- The *Console Plugin* communicates with the REST API server, which enforces RBAC through Kubernetes-native `TokenReview` and `SubjectAccessReview` checks before reading or writing any resource.
-
----
 
 ## Technical Stack
 
-| Layer | Technology |
-|---|---|
-| **Language (backend)** | Go 1.26 |
-| **Operator framework** | controller-runtime |
-| **Virtualisation API** | KubeVirt API |
-| **Metrics source** | Prometheus / Thanos |
-| **Language (frontend)** | TypeScript |
-| **UI framework** | React 18 |
-| **Design system** | PatternFly 6 |
-| **Bundler** | webpack |
-| **CI/CD** | Tekton |
-| **Platform** | OpenShift |
+| Technology | Purpose |
+|------------|---------|
+| **Go 1.23** | Backend operator, API server, approval proxy |
+| **controller-runtime** | Kubernetes controller framework |
+| **KubeVirt** | Virtual machine management on Kubernetes |
+| **Prometheus / Thanos** | Metrics collection and querying |
+| **React + TypeScript** | Console plugin frontend |
+| **PatternFly 5** | Red Hat's UI component library |
+| **OpenShift Console SDK** | Dynamic plugin integration |
+| **JWT (HMAC-SHA256)** | Approval token signing and validation |
 
----
+## Project Structure
 
-## What You Will Learn
+```
+ovro/
+  api/v1alpha1/          # CRD type definitions (Go structs + kubebuilder markers)
+  cmd/
+    main.go              # Operator entrypoint (manager + API server)
+    approval-proxy/      # Standalone approval proxy binary
+  internal/
+    apiserver/           # REST API (handlers, middleware, server)
+    applier/             # VM patching via dynamic client
+    approval/            # JWT token manager
+    approvalproxy/       # Approval page server (HTML templates)
+    calculator/          # Rightsizing analysis algorithm
+    controller/          # Kubernetes controllers (recommendation + restart)
+    notifier/            # Multi-channel notification forwarders
+    owner/               # VM owner resolution from labels
+    prometheus/          # Prometheus/Thanos query client
+  console-plugin/        # React/TypeScript OpenShift Console plugin
+    src/
+      api/               # API client (consoleFetch wrapper)
+      components/        # PatternFly UI components
+```
 
-By working through these tutorials you will gain hands-on experience with:
+## What You'll Learn
 
-- **Designing Kubernetes Custom Resource Definitions** -- defining the `RightsizingRecommendation` and `RightsizingPolicy` CRDs and understanding their role in the operator pattern
-- **Building a multi-controller operator with controller-runtime** -- setting up manager, reconcilers, watches, and event filters in Go
-- **Querying Prometheus programmatically** -- constructing PromQL queries for CPU and memory utilisation and handling the Prometheus HTTP API from Go
-- **Implementing a rightsizing algorithm** -- applying P95 percentile analysis with configurable headroom to produce safe resize recommendations
-- **Enforcing RBAC in a custom REST API** -- using Kubernetes `TokenReview` and `SubjectAccessReview` to validate every incoming request against the caller's permissions
-- **Building an OpenShift Console dynamic plugin** -- scaffolding a React/TypeScript plugin, registering extensions, and integrating with the Console's navigation and resource pages
-- **Working with PatternFly 6 components** -- building data tables, dashboards, forms, and filter toolbars following Red Hat's design system
-- **Setting up Tekton CI/CD pipelines** -- creating build, test, image-build, and image-push tasks that run automatically on every commit
-- **Testing and iterating on a real operator** -- writing unit tests, integration tests, and using `envtest` to validate controller behaviour without a live cluster
-
----
+- How Kubernetes Custom Resource Definitions (CRDs) model domain concepts
+- How controller-runtime reconciliation loops work with non-native resources (KubeVirt VMs)
+- Querying Prometheus programmatically for time-series utilisation data
+- Building a REST API server that integrates with Kubernetes RBAC
+- Implementing a JWT-based approval workflow with multi-channel notifications
+- Creating an OpenShift Console dynamic plugin with React and PatternFly
 
 ## Prerequisites
 
-Before diving in, make sure you are comfortable with the following:
+- Familiarity with Go and basic Kubernetes concepts (Pods, Namespaces, CRDs)
+- Some exposure to React/TypeScript (for the frontend chapters)
+- Understanding of REST APIs and HTTP
 
-- **OpenShift fundamentals** -- You should know how to navigate the OpenShift web console, work with projects and namespaces, and use the `oc` CLI for common operations.
-- **Go basics** -- You do not need to be an expert, but you should be familiar with Go modules, structs, interfaces, and error handling. If you can read and modify a Go program, you are ready.
-- **React basics** -- Understanding of components, hooks (`useState`, `useEffect`), and props. Experience with TypeScript is helpful but not strictly required -- we will explain type annotations as they appear.
-- **Kubernetes Custom Resources** -- A general understanding of what CRDs are and how controllers reconcile desired state with actual state. If you have ever written or read an operator before, you are in great shape.
-
-If any of these areas feel unfamiliar, we recommend spending an hour or two with the official documentation for that topic before continuing. Each tutorial chapter will link to relevant reference material as well.
-
----
-
-*Ready to get started? Head to the next chapter to set up your development environment and deploy your first build of OVRO.*
+Let's start by looking at how OVRO models its data with Custom Resource Definitions.
