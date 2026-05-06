@@ -45,6 +45,7 @@ type VMUtilization struct {
 	MemoryP95Percent float64
 	CPUMaxPercent    float64
 	MemoryMaxPercent float64
+	DataPoints       int
 }
 
 // PrometheusQuerier abstracts Prometheus queries for testability.
@@ -52,12 +53,12 @@ type PrometheusQuerier interface {
 	GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*VMUtilization, error)
 }
 
-// getVMResources fetches the current CPU cores and memory from a VirtualMachine object.
-func (r *RightsizingRecommendationReconciler) getVMResources(ctx context.Context, name, namespace string) (cpuCores int32, memoryGiB int32, err error) {
-	vm := &unstructured.Unstructured{}
+// getVM fetches a VirtualMachine object and extracts CPU cores, memory, and exclusion status.
+func (r *RightsizingRecommendationReconciler) getVM(ctx context.Context, name, namespace string) (vm *unstructured.Unstructured, cpuCores int32, memoryGiB int32, err error) {
+	vm = &unstructured.Unstructured{}
 	vm.SetGroupVersionKind(schema.GroupVersionKind{Group: "kubevirt.io", Version: "v1", Kind: "VirtualMachine"})
 	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, vm); err != nil {
-		return 0, 0, fmt.Errorf("fetching VM: %w", err)
+		return nil, 0, 0, fmt.Errorf("fetching VM: %w", err)
 	}
 
 	cores, found, _ := unstructured.NestedInt64(vm.Object, "spec", "template", "spec", "domain", "cpu", "cores")
@@ -73,7 +74,7 @@ func (r *RightsizingRecommendationReconciler) getVMResources(ctx context.Context
 		}
 	}
 
-	return cpuCores, memoryGiB, nil
+	return vm, cpuCores, memoryGiB, nil
 }
 
 // RightsizingRecommendationReconciler reconciles VM utilization data into
@@ -83,6 +84,7 @@ type RightsizingRecommendationReconciler struct {
 	Scheme     *runtime.Scheme
 	PromClient PrometheusQuerier
 	Log        logr.Logger
+	DemoMode   bool
 }
 
 // +kubebuilder:rbac:groups=rightsizing.redhatconsulting.io,resources=rightsizingrecommendations,verbs=get;list;watch;create;update;patch;delete
@@ -109,40 +111,70 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 
 	requeueAfter := time.Duration(policy.Spec.ReconcileIntervalMinutes) * time.Minute
 
-	// Fetch VM current resources from the VirtualMachine object.
-	cpuCores, memoryGiB, err := r.getVMResources(ctx, req.Name, req.Namespace)
+	// Fetch VM and check exclusion annotation.
+	vm, cpuCores, memoryGiB, err := r.getVM(ctx, req.Name, req.Namespace)
 	if err != nil {
-		log.Error(err, "Failed to fetch VM resources")
+		log.Error(err, "Failed to fetch VM")
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
-	// Query Prometheus for VM utilization metrics.
-	utilization, err := r.PromClient.GetVMUtilization(ctx, req.Name, req.Namespace, policy.Spec.LookbackDays)
-	if err != nil {
-		log.Error(err, "Failed to query Prometheus")
+	annotations := vm.GetAnnotations()
+	if annotations[rightsizingv1alpha1.AnnotationExclude] == "true" {
+		log.Info("VM is excluded from rightsizing, skipping")
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
-	utilization.CurrentCPUCores = cpuCores
-	utilization.CurrentMemoryGiB = memoryGiB
 
-	// Run the rightsizing calculator.
-	input := calculator.AnalysisInput{
-		CurrentCPUCores:     utilization.CurrentCPUCores,
-		CurrentMemoryGiB:    utilization.CurrentMemoryGiB,
-		CPUP95Percent:       utilization.CPUP95Percent,
-		MemoryP95Percent:    utilization.MemoryP95Percent,
-		CPUMaxPercent:       utilization.CPUMaxPercent,
-		MemoryMaxPercent:    utilization.MemoryMaxPercent,
-		HeadroomPercent:     policy.Spec.Algorithm.HeadroomPercent,
-		MinCPUSavings:       policy.Spec.Thresholds.MinCPUSavings,
-		MinMemorySavingsGiB: int32(policy.Spec.Thresholds.MinMemorySavings.Value() / (1024 * 1024 * 1024)),
-		UpsizeThresholdPct:  policy.Spec.Thresholds.UpsizeUtilizationPercent,
-	}
+	var result *calculator.AnalysisResult
+	var utilization *VMUtilization
 
-	result := calculator.Analyze(input)
-	if result == nil {
-		log.Info("No recommendation needed for VM")
-		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	if r.DemoMode {
+		log.Info("Demo mode enabled, generating synthetic recommendation")
+		utilization = demoUtilization(cpuCores, memoryGiB, req.Name)
+		result = &calculator.AnalysisResult{
+			Direction:            calculator.Direction(demoDirection(req.Name)),
+			RecommendedCPUCores:  demoRecommendedCPU(cpuCores, req.Name),
+			RecommendedMemoryGiB: demoRecommendedMem(memoryGiB, req.Name),
+		}
+		result.CPUSavings = cpuCores - result.RecommendedCPUCores
+		result.MemorySavings = memoryGiB - result.RecommendedMemoryGiB
+	} else {
+		// Query Prometheus for VM utilization metrics.
+		var err2 error
+		utilization, err2 = r.PromClient.GetVMUtilization(ctx, req.Name, req.Namespace, policy.Spec.LookbackDays)
+		if err2 != nil {
+			log.Error(err2, "Failed to query Prometheus")
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+
+		// Require at least 7 days of data at 1-minute resolution (50% coverage of 7 days).
+		minDataPoints := 7 * 24 * 60 / 2
+		if utilization.DataPoints < minDataPoints {
+			log.Info("Insufficient metrics data, skipping VM", "dataPoints", utilization.DataPoints, "required", minDataPoints)
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+
+		utilization.CurrentCPUCores = cpuCores
+		utilization.CurrentMemoryGiB = memoryGiB
+
+		// Run the rightsizing calculator.
+		input := calculator.AnalysisInput{
+			CurrentCPUCores:     utilization.CurrentCPUCores,
+			CurrentMemoryGiB:    utilization.CurrentMemoryGiB,
+			CPUP95Percent:       utilization.CPUP95Percent,
+			MemoryP95Percent:    utilization.MemoryP95Percent,
+			CPUMaxPercent:       utilization.CPUMaxPercent,
+			MemoryMaxPercent:    utilization.MemoryMaxPercent,
+			HeadroomPercent:     policy.Spec.Algorithm.HeadroomPercent,
+			MinCPUSavings:       policy.Spec.Thresholds.MinCPUSavings,
+			MinMemorySavingsGiB: int32(policy.Spec.Thresholds.MinMemorySavings.Value() / (1024 * 1024 * 1024)),
+			UpsizeThresholdPct:  policy.Spec.Thresholds.UpsizeUtilizationPercent,
+		}
+
+		result = calculator.Analyze(input)
+		if result == nil {
+			log.Info("No recommendation needed for VM")
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
 	}
 
 	// Create or update the RightsizingRecommendation resource.
@@ -164,8 +196,8 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 				},
 				Direction: rightsizingv1alpha1.RecommendationDirection(result.Direction),
 				Current: rightsizingv1alpha1.ResourceSpec{
-					CPU:    rightsizingv1alpha1.CPUSpec{Cores: input.CurrentCPUCores, Sockets: 1, Threads: 1},
-					Memory: resource.MustParse(fmt.Sprintf("%dGi", input.CurrentMemoryGiB)),
+					CPU:    rightsizingv1alpha1.CPUSpec{Cores: cpuCores, Sockets: 1, Threads: 1},
+					Memory: resource.MustParse(fmt.Sprintf("%dGi", memoryGiB)),
 				},
 				Recommended: rightsizingv1alpha1.ResourceSpec{
 					CPU:    rightsizingv1alpha1.CPUSpec{Cores: result.RecommendedCPUCores, Sockets: 1, Threads: 1},
@@ -251,6 +283,59 @@ func abs(n int32) int32 {
 		return -n
 	}
 	return n
+}
+
+func demoDirection(vmName string) string {
+	h := 0
+	for _, c := range vmName {
+		h += int(c)
+	}
+	if h%2 == 0 {
+		return string(rightsizingv1alpha1.DirectionDownsize)
+	}
+	return string(rightsizingv1alpha1.DirectionUpsize)
+}
+
+func demoRecommendedCPU(current int32, vmName string) int32 {
+	if demoDirection(vmName) == string(rightsizingv1alpha1.DirectionDownsize) {
+		rec := current / 2
+		if rec < 1 {
+			rec = 1
+		}
+		return rec
+	}
+	return current * 2
+}
+
+func demoRecommendedMem(current int32, vmName string) int32 {
+	if demoDirection(vmName) == string(rightsizingv1alpha1.DirectionDownsize) {
+		rec := current / 2
+		if rec < 1 {
+			rec = 1
+		}
+		return rec
+	}
+	return current * 2
+}
+
+func demoUtilization(cpuCores, memoryGiB int32, vmName string) *VMUtilization {
+	u := &VMUtilization{
+		CurrentCPUCores:  cpuCores,
+		CurrentMemoryGiB: memoryGiB,
+		DataPoints:       20160,
+	}
+	if demoDirection(vmName) == string(rightsizingv1alpha1.DirectionDownsize) {
+		u.CPUP95Percent = 25.0
+		u.MemoryP95Percent = 30.0
+		u.CPUMaxPercent = 45.0
+		u.MemoryMaxPercent = 50.0
+	} else {
+		u.CPUP95Percent = 92.0
+		u.MemoryP95Percent = 88.0
+		u.CPUMaxPercent = 98.0
+		u.MemoryMaxPercent = 95.0
+	}
+	return u
 }
 
 // SetupScheme creates a runtime.Scheme with the rightsizing API types registered,

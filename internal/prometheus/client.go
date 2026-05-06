@@ -42,6 +42,7 @@ type VMUtilization struct {
 	MemoryP95Percent float64
 	CPUMaxPercent    float64
 	MemoryMaxPercent float64
+	DataPoints       int
 }
 
 // NewClient creates a new Prometheus client with the given base URL.
@@ -176,6 +177,7 @@ func (c *Client) GetVMUtilization(ctx context.Context, vmName, namespace string,
 		MemoryP95Percent: calculator.ComputePercentile(metrics.MemorySamples, 95),
 		CPUMaxPercent:    maxValue(metrics.CPUSamples),
 		MemoryMaxPercent: maxValue(metrics.MemorySamples),
+		DataPoints:       len(metrics.CPUSamples),
 	}
 
 	return utilization, nil

@@ -37,6 +37,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/v1/recommendations/{namespace}/{name}", auth(http.HandlerFunc(s.handleGetRecommendation)))
 	s.mux.Handle("POST /api/v1/recommendations/{namespace}/{name}/apply", auth(http.HandlerFunc(s.handleApply)))
 	s.mux.Handle("POST /api/v1/recommendations/{namespace}/{name}/revert", auth(http.HandlerFunc(s.handleRevert)))
+	s.mux.Handle("GET /api/v1/vms", auth(http.HandlerFunc(s.handleListVMs)))
 	s.mux.Handle("POST /api/v1/vms/{namespace}/{name}/exclude", auth(http.HandlerFunc(s.handleExclude)))
 	s.mux.Handle("DELETE /api/v1/vms/{namespace}/{name}/exclude", auth(http.HandlerFunc(s.handleRemoveExclusion)))
 	s.mux.Handle("GET /api/v1/overview", auth(http.HandlerFunc(s.handleOverview)))

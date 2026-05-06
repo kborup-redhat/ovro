@@ -85,3 +85,12 @@ export interface RightsizingPolicy {
 }
 
 export type RestartOption = 'now' | 'schedule' | 'later';
+
+export interface VMListItem {
+  name: string;
+  namespace: string;
+  excluded: boolean;
+  running: boolean;
+  cpuCores: number;
+  memory: string;
+}

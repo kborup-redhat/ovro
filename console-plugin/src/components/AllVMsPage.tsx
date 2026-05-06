@@ -7,6 +7,7 @@ import {
   EmptyStateBody,
   EmptyStateHeader,
   EmptyStateIcon,
+  Label,
   SearchInput,
   Spinner,
   Toolbar,
@@ -16,9 +17,9 @@ import {
 import { CubesIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { VMListItem } from '../types';
-import { listVMs, removeExclusion } from '../api/client';
+import { listVMs, excludeVM, removeExclusion } from '../api/client';
 
-export const ExcludedVMsPage: React.FC = () => {
+export const AllVMsPage: React.FC = () => {
   const [vms, setVMs] = useState<VMListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,12 +29,22 @@ export const ExcludedVMsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     listVMs()
-      .then((all) => setVMs(all.filter((vm) => vm.excluded)))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load excluded VMs'))
+      .then(setVMs)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load VMs'))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { loadData(); }, []);
+
+  const handleExclude = async (namespace: string, name: string) => {
+    setError(null);
+    try {
+      await excludeVM(namespace, name);
+      loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to exclude VM');
+    }
+  };
 
   const handleResume = async (namespace: string, name: string) => {
     setError(null);
@@ -54,14 +65,15 @@ export const ExcludedVMsPage: React.FC = () => {
   }
 
   const filtered = vms.filter((vm) =>
-    vm.name.toLowerCase().includes(search.toLowerCase()),
+    vm.name.toLowerCase().includes(search.toLowerCase()) ||
+    vm.namespace.toLowerCase().includes(search.toLowerCase()),
   );
 
   if (vms.length === 0 && !error) {
     return (
       <EmptyState>
-        <EmptyStateHeader titleText="No excluded VMs" headingLevel="h2" icon={<EmptyStateIcon icon={CubesIcon} />} />
-        <EmptyStateBody>No VMs are currently excluded from rightsizing monitoring.</EmptyStateBody>
+        <EmptyStateHeader titleText="No virtual machines" headingLevel="h2" icon={<EmptyStateIcon icon={CubesIcon} />} />
+        <EmptyStateBody>No virtual machines found in accessible namespaces.</EmptyStateBody>
       </EmptyState>
     );
   }
@@ -77,7 +89,7 @@ export const ExcludedVMsPage: React.FC = () => {
         <ToolbarContent>
           <ToolbarItem>
             <SearchInput
-              placeholder="Search excluded VMs..."
+              placeholder="Search VMs..."
               value={search}
               onChange={(_e, v) => setSearch(v)}
               onClear={() => setSearch('')}
@@ -85,13 +97,15 @@ export const ExcludedVMsPage: React.FC = () => {
           </ToolbarItem>
         </ToolbarContent>
       </Toolbar>
-      <Table aria-label="Excluded VMs">
+      <Table aria-label="Virtual Machines">
         <Thead>
           <Tr>
             <Th>VM Name</Th>
             <Th>Namespace</Th>
+            <Th>Status</Th>
             <Th>CPU</Th>
             <Th>Memory</Th>
+            <Th>Rightsizing</Th>
             <Th>Actions</Th>
           </Tr>
         </Thead>
@@ -100,12 +114,28 @@ export const ExcludedVMsPage: React.FC = () => {
             <Tr key={`${vm.namespace}/${vm.name}`}>
               <Td>{vm.name}</Td>
               <Td>{vm.namespace}</Td>
+              <Td>
+                {vm.running
+                  ? <Label color="green">Running</Label>
+                  : <Label color="grey">Stopped</Label>}
+              </Td>
               <Td>{vm.cpuCores} cores</Td>
               <Td>{vm.memory}</Td>
               <Td>
-                <Button variant="secondary" size="sm" onClick={() => handleResume(vm.namespace, vm.name)}>
-                  Resume Monitoring
-                </Button>
+                {vm.excluded
+                  ? <Label color="orange">Excluded</Label>
+                  : <Label color="blue">Enabled</Label>}
+              </Td>
+              <Td>
+                {vm.excluded ? (
+                  <Button variant="secondary" size="sm" onClick={() => handleResume(vm.namespace, vm.name)}>
+                    Resume Monitoring
+                  </Button>
+                ) : (
+                  <Button variant="warning" size="sm" onClick={() => handleExclude(vm.namespace, vm.name)}>
+                    Exclude
+                  </Button>
+                )}
               </Td>
             </Tr>
           ))}

@@ -9,6 +9,7 @@ import (
 	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
 	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -27,6 +28,15 @@ type OverviewResponse struct {
 type ApplyRequest struct {
 	RestartOption string `json:"restartOption"`
 	ScheduledAt   string `json:"scheduledAt,omitempty"`
+}
+
+type VMListItem struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Excluded  bool   `json:"excluded"`
+	Running   bool   `json:"running"`
+	CPUCores  int64  `json:"cpuCores"`
+	Memory    string `json:"memory"`
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -307,6 +317,66 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, overview)
+}
+
+func (s *Server) handleListVMs(w http.ResponseWriter, r *http.Request) {
+	if s.DynamicClient == nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	user := UserInfoFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	vmList, err := s.DynamicClient.Resource(vmGVR).List(r.Context(), metav1.ListOptions{})
+	if err != nil {
+		slog.Error("listing VMs", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	checked := make(map[string]bool)
+	var items []VMListItem
+	for _, vm := range vmList.Items {
+		ns := vm.GetNamespace()
+		allowed, exists := checked[ns]
+		if !exists {
+			allowed = s.canUserAccessNamespace(r, user, ns, "get")
+			checked[ns] = allowed
+		}
+		if !allowed {
+			continue
+		}
+
+		annotations := vm.GetAnnotations()
+		excluded := annotations[rightsizingv1alpha1.AnnotationExclude] == "true"
+
+		printableStatus, _, _ := unstructured.NestedString(vm.Object, "status", "printableStatus")
+		running := printableStatus == "Running"
+
+		cpuCores, _, _ := unstructured.NestedInt64(vm.Object, "spec", "template", "spec", "domain", "cpu", "cores")
+		memStr, _, _ := unstructured.NestedString(vm.Object, "spec", "template", "spec", "domain", "resources", "requests", "memory")
+		if memStr == "" {
+			memStr = "0"
+		}
+
+		items = append(items, VMListItem{
+			Name:      vm.GetName(),
+			Namespace: ns,
+			Excluded:  excluded,
+			Running:   running,
+			CPUCores:  cpuCores,
+			Memory:    memStr,
+		})
+	}
+
+	if items == nil {
+		items = []VMListItem{}
+	}
+	writeJSON(w, items)
 }
 
 func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request) {

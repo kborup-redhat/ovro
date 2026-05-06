@@ -77,6 +77,7 @@ func (a *prometheusAdapter) GetVMUtilization(
 		MemoryP95Percent: u.MemoryP95Percent,
 		CPUMaxPercent:    u.CPUMaxPercent,
 		MemoryMaxPercent: u.MemoryMaxPercent,
+		DataPoints:       u.DataPoints,
 	}, nil
 }
 
@@ -276,12 +277,18 @@ func main() {
 	promClient := &prometheusAdapter{client: prometheus.NewClient(prometheusURL)}
 	vmApplier := applier.New(dynamicClient)
 
+	demoMode := os.Getenv("OVRO_DEMO_MODE") == "true"
+	if demoMode {
+		setupLog.Info("Demo mode enabled — generating synthetic recommendations for all VMs")
+	}
+
 	// Set up the RightsizingRecommendation controller.
 	if err := (&controller.RightsizingRecommendationReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		PromClient: promClient,
 		Log:        ctrl.Log.WithName("controllers").WithName("Recommendation"),
+		DemoMode:   demoMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RightsizingRecommendation")
 		os.Exit(1)

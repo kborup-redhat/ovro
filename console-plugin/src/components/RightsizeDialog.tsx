@@ -28,12 +28,13 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
 
   const rec = recommendation;
   const isHotplug = rec.spec.hotplugCapable;
+  const isPoweredOff = rec.spec.metrics.cpuP95Percent === 0 && rec.spec.metrics.memoryP95Percent === 0;
 
   const handleApply = async () => {
     setApplying(true);
     setError(null);
     try {
-      const option = isHotplug ? 'now' : restartOption;
+      const option = isPoweredOff ? 'later' : isHotplug ? 'now' : restartOption;
       const scheduledRFC3339 = restartOption === 'schedule' && scheduledAt
         ? new Date(scheduledAt).toISOString()
         : undefined;
@@ -66,7 +67,11 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
       ]}
     >
       <Stack hasGutter>
-        {isHotplug ? (
+        {isPoweredOff ? (
+          <StackItem>
+            <Alert variant="info" isInline title="This VM appears to be powered off. Changes will take effect on next boot." />
+          </StackItem>
+        ) : isHotplug ? (
           <StackItem>
             <Alert variant="info" isInline title="This VM supports CPU/memory hotplug. Changes will be applied live without downtime." />
           </StackItem>
@@ -104,7 +109,7 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
           <p>Based on {rec.spec.metrics.lookbackDays}-day analysis: CPU P95: {rec.spec.metrics.cpuP95Percent}%, Memory P95: {rec.spec.metrics.memoryP95Percent}%</p>
         </StackItem>
 
-        {!isHotplug && (
+        {!isHotplug && !isPoweredOff && (
           <StackItem>
             <Stack hasGutter>
               <StackItem><strong>When should the VM restart?</strong></StackItem>

@@ -5,6 +5,7 @@ import {
   RightsizingPolicy,
   RightsizingPolicySpec,
   RestartOption,
+  VMListItem,
 } from '../types';
 
 const API_BASE = '/api/proxy/plugin/ovro-console-plugin/ovro-backend/api/v1';
@@ -75,6 +76,10 @@ export async function removeExclusion(namespace: string, name: string): Promise<
   await fetchJSON(`${API_BASE}/vms/${namespace}/${name}/exclude`, {
     method: 'DELETE',
   });
+}
+
+export async function listVMs(): Promise<VMListItem[]> {
+  return fetchJSON(`${API_BASE}/vms`);
 }
 
 export async function getOverview(): Promise<OverviewData> {

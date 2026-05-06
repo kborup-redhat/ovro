@@ -84,6 +84,13 @@ func analyzeDownsize(input AnalysisInput) *AnalysisResult {
 	memUsageGiB := float64(input.CurrentMemoryGiB) * input.MemoryP95Percent / 100.0
 	recommendedMem := int32(math.Ceil(memUsageGiB * headroomMultiplier))
 
+	if recommendedCPU < 1 {
+		recommendedCPU = 1
+	}
+	if recommendedMem < 1 {
+		recommendedMem = 1
+	}
+
 	if recommendedCPU >= input.CurrentCPUCores {
 		recommendedCPU = input.CurrentCPUCores
 	}
