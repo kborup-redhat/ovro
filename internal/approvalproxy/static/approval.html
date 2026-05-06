@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OVRO - VM Rightsizing Approval</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'RedHatText', 'Helvetica Neue', Arial, sans-serif;
+            background: #F0F0F0;
+            color: #151515;
+            line-height: 1.5;
+        }
+        .header {
+            background: #151515;
+            color: #FFFFFF;
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+        }
+        .header .brand {
+            color: #EE0000;
+            font-weight: 700;
+        }
+        .container {
+            max-width: 760px;
+            margin: 32px auto;
+            padding: 0 16px;
+        }
+        .card {
+            background: #FFFFFF;
+            border: 1px solid #D2D2D2;
+            border-radius: 3px;
+            margin-bottom: 24px;
+        }
+        .card-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid #D2D2D2;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .card-body { padding: 24px; }
+        .vm-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .vm-name {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-downsize { background: #E7F1E4; color: #1E4F18; }
+        .badge-upsize { background: #FAEAE8; color: #7D1007; }
+        .namespace-label {
+            font-size: 14px;
+            color: #6A6E73;
+        }
+        .owner-label {
+            font-size: 14px;
+            color: #6A6E73;
+            margin-bottom: 8px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+        }
+        th, td {
+            padding: 10px 16px;
+            text-align: left;
+            border-bottom: 1px solid #D2D2D2;
+        }
+        th {
+            background: #F0F0F0;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6A6E73;
+        }
+        td { font-size: 14px; }
+        .savings-positive { color: #1E4F18; font-weight: 600; }
+        .savings-negative { color: #7D1007; font-weight: 600; }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 16px;
+        }
+        .metric-item {
+            text-align: center;
+            padding: 12px;
+            background: #F0F0F0;
+            border-radius: 3px;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #6A6E73;
+            margin-top: 4px;
+        }
+        .hotplug-notice {
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #E7F1E4;
+            border-left: 3px solid #3E8635;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .actions-section { margin-top: 8px; }
+        .action-group {
+            margin-bottom: 20px;
+            padding: 16px;
+            border: 1px solid #D2D2D2;
+            border-radius: 3px;
+        }
+        .action-group.selected {
+            border-color: #06C;
+            box-shadow: 0 0 0 1px #06C;
+        }
+        .action-radio {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+        .action-radio input[type="radio"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #06C;
+        }
+        .action-radio label {
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .action-description {
+            font-size: 13px;
+            color: #6A6E73;
+            margin-left: 26px;
+            margin-bottom: 12px;
+        }
+        .suboptions {
+            margin-left: 26px;
+            display: none;
+        }
+        .suboptions.visible { display: block; }
+        .suboption {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .suboption input[type="radio"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #06C;
+        }
+        .suboption label {
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .schedule-input {
+            margin-left: 26px;
+            margin-top: 8px;
+            display: none;
+        }
+        .schedule-input.visible { display: block; }
+        .schedule-input input {
+            padding: 6px 12px;
+            border: 1px solid #D2D2D2;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #D2D2D2;
+            border-radius: 3px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 60px;
+        }
+        textarea:focus, input:focus {
+            outline: none;
+            border-color: #06C;
+            box-shadow: 0 0 0 1px #06C;
+        }
+        .reason-field {
+            margin-left: 26px;
+            display: none;
+        }
+        .reason-field.visible { display: block; }
+        .btn-row {
+            margin-top: 24px;
+            display: flex;
+            gap: 12px;
+        }
+        .btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 3px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .btn-primary {
+            background: #06C;
+            color: #FFFFFF;
+        }
+        .btn-primary:hover:not(:disabled) { background: #004080; }
+        .btn-approve {
+            background: #3E8635;
+            color: #FFFFFF;
+        }
+        .btn-approve:hover:not(:disabled) { background: #1E4F18; }
+        .btn-warning {
+            background: #F0AB00;
+            color: #151515;
+        }
+        .btn-warning:hover:not(:disabled) { background: #C58C00; }
+        .footer {
+            text-align: center;
+            padding: 24px;
+            font-size: 12px;
+            color: #6A6E73;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span class="brand">OVRO</span> &mdash; VM Rightsizing Approval</h1>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-header">Virtual Machine Details</div>
+            <div class="card-body">
+                <div class="vm-info">
+                    <span class="vm-name">{{.VMName}}</span>
+                    {{if eq .Direction "downsize"}}
+                    <span class="badge badge-downsize">Downsize</span>
+                    {{else}}
+                    <span class="badge badge-upsize">Upsize</span>
+                    {{end}}
+                </div>
+                <div class="namespace-label">Namespace: <strong>{{.Namespace}}</strong></div>
+                <div class="owner-label">Owner: <strong>{{.Owner}}</strong></div>
+
+                {{if .HotplugCapable}}
+                <div class="hotplug-notice">
+                    This VM supports CPU/memory hotplug. Changes can be applied without a restart.
+                </div>
+                {{end}}
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Resource Comparison</div>
+            <div class="card-body">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Resource</th>
+                            <th>Current</th>
+                            <th>Recommended</th>
+                            <th>Savings</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>CPU Cores</td>
+                            <td>{{.CurrentCPU}}</td>
+                            <td>{{.RecommendedCPU}}</td>
+                            <td>
+                                {{if eq .Direction "downsize"}}
+                                <span class="savings-positive">-{{.CPUSavings}} cores</span>
+                                {{else}}
+                                <span class="savings-negative">+{{.CPUSavings}} cores</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Memory</td>
+                            <td>{{.CurrentMemory}}</td>
+                            <td>{{.RecommendedMemory}}</td>
+                            <td>
+                                {{if eq .Direction "downsize"}}
+                                <span class="savings-positive">-{{.MemorySavings}}</span>
+                                {{else}}
+                                <span class="savings-negative">+{{.MemorySavings}}</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Usage Metrics ({{.LookbackDays}}-Day Lookback)</div>
+            <div class="card-body">
+                <div class="metrics-grid">
+                    <div class="metric-item">
+                        <div class="metric-value">{{printf "%.1f" .CPUP95}}%</div>
+                        <div class="metric-label">CPU P95</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">{{printf "%.1f" .MemP95}}%</div>
+                        <div class="metric-label">Memory P95</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">{{printf "%.1f" .CPUMax}}%</div>
+                        <div class="metric-label">CPU Max</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">{{printf "%.1f" .MemMax}}%</div>
+                        <div class="metric-label">Memory Max</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Your Decision</div>
+            <div class="card-body">
+                <form method="POST" action="/approve" id="approvalForm">
+                    <input type="hidden" name="token" value="{{.Token}}">
+
+                    <div class="actions-section">
+                        <div class="action-group" id="group-approve">
+                            <div class="action-radio">
+                                <input type="radio" name="action" value="approve" id="action-approve">
+                                <label for="action-approve">Approve Recommendation</label>
+                            </div>
+                            <div class="action-description">
+                                Accept the rightsizing recommendation and apply the resource changes.
+                            </div>
+                            {{if not .HotplugCapable}}
+                            <div class="suboptions" id="restart-options">
+                                <div class="suboption">
+                                    <input type="radio" name="restartOption" value="now" id="restart-now">
+                                    <label for="restart-now">Restart Now</label>
+                                </div>
+                                <div class="suboption">
+                                    <input type="radio" name="restartOption" value="schedule" id="restart-schedule">
+                                    <label for="restart-schedule">Schedule Restart</label>
+                                </div>
+                                <div class="schedule-input" id="schedule-input">
+                                    <input type="datetime-local" name="scheduledAt" id="scheduledAt">
+                                </div>
+                                <div class="suboption">
+                                    <input type="radio" name="restartOption" value="later" id="restart-later">
+                                    <label for="restart-later">Restart Later (Manual)</label>
+                                </div>
+                            </div>
+                            {{end}}
+                        </div>
+
+                        <div class="action-group" id="group-reject">
+                            <div class="action-radio">
+                                <input type="radio" name="action" value="reject" id="action-reject">
+                                <label for="action-reject">Reject Recommendation</label>
+                            </div>
+                            <div class="action-description">
+                                Decline this recommendation. The VM will be re-evaluated in the next cycle.
+                            </div>
+                            <div class="reason-field" id="reject-reason">
+                                <textarea name="reason" placeholder="Optional: reason for rejection"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="action-group" id="group-exclude">
+                            <div class="action-radio">
+                                <input type="radio" name="action" value="exclude" id="action-exclude">
+                                <label for="action-exclude">Exclude from Rightsizing</label>
+                            </div>
+                            <div class="action-description">
+                                Permanently exclude this VM from future rightsizing recommendations.
+                            </div>
+                            <div class="reason-field" id="exclude-reason">
+                                <textarea name="reason" placeholder="Optional: reason for exclusion"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="btn-row">
+                        <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Submit Decision</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        OVRO &mdash; OpenShift Virtual Machine Rightsizing Operator
+    </div>
+
+    <script>
+        (function() {
+            var form = document.getElementById('approvalForm');
+            var submitBtn = document.getElementById('submitBtn');
+            var restartOpts = document.getElementById('restart-options');
+            var scheduleInput = document.getElementById('schedule-input');
+            var rejectReason = document.getElementById('reject-reason');
+            var excludeReason = document.getElementById('exclude-reason');
+            var groups = document.querySelectorAll('.action-group');
+
+            var actionRadios = document.querySelectorAll('input[name="action"]');
+            actionRadios.forEach(function(radio) {
+                radio.addEventListener('change', function() {
+                    submitBtn.disabled = false;
+
+                    groups.forEach(function(g) { g.classList.remove('selected'); });
+                    radio.closest('.action-group').classList.add('selected');
+
+                    if (restartOpts) restartOpts.classList.remove('visible');
+                    rejectReason.classList.remove('visible');
+                    excludeReason.classList.remove('visible');
+
+                    if (radio.value === 'approve' && restartOpts) {
+                        restartOpts.classList.add('visible');
+                    } else if (radio.value === 'reject') {
+                        rejectReason.classList.add('visible');
+                    } else if (radio.value === 'exclude') {
+                        excludeReason.classList.add('visible');
+                    }
+
+                    updateButtonStyle(radio.value);
+                });
+            });
+
+            if (restartOpts) {
+                var restartRadios = document.querySelectorAll('input[name="restartOption"]');
+                restartRadios.forEach(function(radio) {
+                    radio.addEventListener('change', function() {
+                        if (scheduleInput) {
+                            if (radio.value === 'schedule') {
+                                scheduleInput.classList.add('visible');
+                            } else {
+                                scheduleInput.classList.remove('visible');
+                            }
+                        }
+                    });
+                });
+            }
+
+            function updateButtonStyle(action) {
+                submitBtn.className = 'btn';
+                if (action === 'approve') {
+                    submitBtn.className = 'btn btn-approve';
+                    submitBtn.textContent = 'Approve & Apply';
+                } else if (action === 'reject') {
+                    submitBtn.className = 'btn btn-primary';
+                    submitBtn.textContent = 'Reject Recommendation';
+                } else if (action === 'exclude') {
+                    submitBtn.className = 'btn btn-warning';
+                    submitBtn.textContent = 'Exclude VM';
+                }
+            }
+
+            form.addEventListener('submit', function() {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Submitting...';
+            });
+        })();
+    </script>
+</body>
+</html>
