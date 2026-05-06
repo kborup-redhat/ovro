@@ -25,6 +25,8 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
   const [scheduledAt, setScheduledAt] = useState('');
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [approvalOwner, setApprovalOwner] = useState('');
 
   const rec = recommendation;
   const isHotplug = rec.spec.hotplugCapable;
@@ -38,14 +40,20 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
       const scheduledRFC3339 = restartOption === 'schedule' && scheduledAt
         ? new Date(scheduledAt).toISOString()
         : undefined;
-      await applyRecommendation(
+      const result = await applyRecommendation(
         rec.metadata.namespace,
         rec.metadata.name,
         option,
         scheduledRFC3339,
       );
-      onApplied();
-      onClose();
+
+      if (result.awaitingApproval) {
+        setAwaitingApproval(true);
+        setApprovalOwner(result.owner || '');
+      } else {
+        onApplied();
+        onClose();
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
@@ -59,7 +67,7 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
       variant={ModalVariant.medium}
       isOpen={isOpen}
       onClose={onClose}
-      actions={[
+      actions={awaitingApproval ? [] : [
         <Button key="apply" variant="primary" onClick={handleApply} isLoading={applying} isDisabled={applying}>
           {isHotplug ? 'Apply Now (Live)' : 'Apply Changes'}
         </Button>,
@@ -67,6 +75,19 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
       ]}
     >
       <Stack hasGutter>
+        {awaitingApproval ? (
+          <>
+            <StackItem>
+              <Alert variant="success" isInline title="Approval request sent">
+                Notification sent to {approvalOwner}. The owner will review and approve the rightsizing changes.
+              </Alert>
+            </StackItem>
+            <StackItem>
+              <Button variant="primary" onClick={() => { onApplied(); onClose(); }}>Close</Button>
+            </StackItem>
+          </>
+        ) : (
+          <>
         {isPoweredOff ? (
           <StackItem>
             <Alert variant="info" isInline title="This VM appears to be powered off. Changes will take effect on next boot." />
@@ -134,6 +155,8 @@ export const RightsizeDialog: React.FC<Props> = ({ recommendation, isOpen, onClo
         </StackItem>
 
         {error && <StackItem><Alert variant="danger" isInline title={error} /></StackItem>}
+          </>
+        )}
       </Stack>
     </Modal>
   );

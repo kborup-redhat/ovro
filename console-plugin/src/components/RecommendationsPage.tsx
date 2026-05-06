@@ -18,7 +18,7 @@ import {
 import { SearchIcon } from '@patternfly/react-icons';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { RightsizingRecommendation } from '../types';
-import { listRecommendations, revertRecommendation } from '../api/client';
+import { listRecommendations, revertRecommendation, rejectRecommendation } from '../api/client';
 
 interface Props {
   onRightsize: (rec: RightsizingRecommendation) => void;
@@ -46,6 +46,13 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
     revertRecommendation(rec.metadata.namespace, rec.metadata.name)
       .then(() => loadData())
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to revert'));
+  };
+
+  const handleCancelApproval = (rec: RightsizingRecommendation) => {
+    setError(null);
+    rejectRecommendation(rec.metadata.namespace, rec.metadata.name, 'Cancelled by admin')
+      .then(() => loadData())
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to cancel approval'));
   };
 
   if (loading) {
@@ -81,6 +88,14 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
         );
       case 'applied':
         return <Button variant="danger" size="sm" onClick={() => handleRevert(rec)}>Revert</Button>;
+      case 'awaiting-approval':
+        return (
+          <Tooltip content={`Awaiting approval from ${rec.status.owner || 'owner'}`}>
+            <Button variant="secondary" size="sm" onClick={() => handleCancelApproval(rec)}>
+              Cancel Approval
+            </Button>
+          </Tooltip>
+        );
       default:
         return null;
     }
@@ -96,6 +111,7 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
       pending: 'blue',
       applied: 'green',
       'applied-pending-restart': 'orange',
+      'awaiting-approval': 'orange',
       reverted: 'grey',
       failed: 'red',
     };
