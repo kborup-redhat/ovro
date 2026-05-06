@@ -1,0 +1,151 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ovro-build
+  namespace: ovro-system
+spec:
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+    - name: git-revision
+      type: string
+      description: Git revision (branch, tag, or commit SHA)
+      default: main
+    - name: image-registry
+      type: string
+      description: Container image registry
+      default: image-registry.openshift-image-registry.svc:5000/ovro-system
+  workspaces:
+    - name: workspace
+  tasks:
+    - name: git-clone
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton-catalog-tasks
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: version
+            value: "0.9"
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: workspace
+
+    - name: go-lint
+      runAfter: [git-clone]
+      taskRef:
+        kind: Task
+        name: ovro-go-vet
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: go-test
+      runAfter: [go-lint]
+      taskRef:
+        kind: Task
+        name: ovro-go-test
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: npm-lint
+      runAfter: [go-test]
+      taskRef:
+        kind: Task
+        name: ovro-npm-lint
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: npm-test
+      runAfter: [npm-lint]
+      taskRef:
+        kind: Task
+        name: ovro-npm-test
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: build-backend
+      runAfter: [npm-test]
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton-catalog-tasks
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: version
+            value: "0.8"
+      params:
+        - name: IMAGE
+          value: $(params.image-registry)/ovro-backend:$(params.git-revision)
+        - name: DOCKERFILE
+          value: Dockerfile.backend
+        - name: CONTEXT
+          value: .
+        - name: TLSVERIFY
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: build-plugin
+      runAfter: [build-backend]
+      taskRef:
+        resolver: hub
+        params:
+          - name: catalog
+            value: tekton-catalog-tasks
+          - name: type
+            value: artifact
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: version
+            value: "0.8"
+      params:
+        - name: IMAGE
+          value: $(params.image-registry)/ovro-console-plugin:$(params.git-revision)
+        - name: DOCKERFILE
+          value: console-plugin/Dockerfile
+        - name: CONTEXT
+          value: console-plugin
+        - name: TLSVERIFY
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    - name: deploy
+      runAfter: [build-plugin]
+      taskRef:
+        kind: Task
+        name: ovro-deploy
+      params:
+        - name: backend-image
+          value: $(params.image-registry)/ovro-backend:$(params.git-revision)
+        - name: plugin-image
+          value: $(params.image-registry)/ovro-console-plugin:$(params.git-revision)
+      workspaces:
+        - name: source
+          workspace: workspace

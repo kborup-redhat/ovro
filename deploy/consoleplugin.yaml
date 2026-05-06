@@ -1,0 +1,21 @@
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: ovro-console-plugin
+spec:
+  displayName: "OVRO - Rightsizing"
+  backend:
+    type: Service
+    service:
+      name: ovro-console-plugin
+      namespace: ovro-system
+      port: 9443
+      basePath: /
+  proxy:
+    - type: Service
+      alias: ovro-backend
+      authorize: true
+      service:
+        name: ovro-backend
+        namespace: ovro-system
+        port: 8443

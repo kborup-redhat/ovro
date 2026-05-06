@@ -1,0 +1,21 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ovro-npm-lint
+  namespace: ovro-system
+spec:
+  workspaces:
+    - name: source
+  steps:
+    - name: lint
+      image: node:20
+      workingDir: $(workspaces.source.path)/console-plugin
+      env:
+        - name: npm_config_cache
+          value: $(workspaces.source.path)/.cache/npm
+      script: |
+        #!/bin/sh
+        set -ex
+        mkdir -p $npm_config_cache
+        npm ci 2>&1 | grep -v "npm warn deprecated"
+        npx eslint src/

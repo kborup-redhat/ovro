@@ -1,0 +1,375 @@
+package apiserver
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+
+	rightsizingv1alpha1 "github.com/kborup-redhat/ovro/api/v1alpha1"
+	authv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const maxBodySize = 1 << 20 // 1 MB
+
+type OverviewResponse struct {
+	TotalVMs           int   `json:"totalVMs"`
+	DownsizeCandidates int   `json:"downsizeCandidates"`
+	UpsizeNeeded       int   `json:"upsizeNeeded"`
+	AppliedToday       int   `json:"appliedToday"`
+	TotalCPUSavings    int32 `json:"totalCpuSavings"`
+	TotalMemorySavings int64 `json:"totalMemorySavings"`
+}
+
+type ApplyRequest struct {
+	RestartOption string `json:"restartOption"`
+	ScheduledAt   string `json:"scheduledAt,omitempty"`
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("encoding JSON response", "error", err)
+	}
+}
+
+func (s *Server) canUserAccessNamespace(r *http.Request, user *UserInfo, namespace, verb string) bool {
+	if user == nil || s.Clientset == nil {
+		return false
+	}
+	sar := &authv1.SubjectAccessReview{
+		Spec: authv1.SubjectAccessReviewSpec{
+			User:   user.Username,
+			Groups: user.Groups,
+			ResourceAttributes: &authv1.ResourceAttributes{
+				Verb:      verb,
+				Group:     "rightsizing.redhatconsulting.io",
+				Resource:  "rightsizingrecommendations",
+				Namespace: namespace,
+			},
+		},
+	}
+	result, err := s.Clientset.AuthorizationV1().SubjectAccessReviews().Create(
+		r.Context(), sar, metav1.CreateOptions{},
+	)
+	if err != nil {
+		slog.Error("namespace access check failed", "namespace", namespace, "error", err)
+		return false
+	}
+	return result.Status.Allowed
+}
+
+func (s *Server) filterByNamespaceAccess(r *http.Request, items []rightsizingv1alpha1.RightsizingRecommendation) []rightsizingv1alpha1.RightsizingRecommendation {
+	user := UserInfoFromContext(r.Context())
+	if user == nil {
+		return nil
+	}
+
+	checked := make(map[string]bool)
+	var filtered []rightsizingv1alpha1.RightsizingRecommendation
+	for _, item := range items {
+		ns := item.Namespace
+		allowed, exists := checked[ns]
+		if !exists {
+			allowed = s.canUserAccessNamespace(r, user, ns, "get")
+			checked[ns] = allowed
+		}
+		if allowed {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func (s *Server) handleListRecommendations(w http.ResponseWriter, r *http.Request) {
+	list := &rightsizingv1alpha1.RightsizingRecommendationList{}
+	opts := []client.ListOption{}
+
+	if ns := r.URL.Query().Get("namespace"); ns != "" {
+		opts = append(opts, client.InNamespace(ns))
+	}
+
+	if err := s.K8sClient.List(r.Context(), list, opts...); err != nil {
+		slog.Error("listing recommendations", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	items := s.filterByNamespaceAccess(r, list.Items)
+
+	if direction := r.URL.Query().Get("direction"); direction != "" {
+		filtered := make([]rightsizingv1alpha1.RightsizingRecommendation, 0)
+		for _, item := range items {
+			if string(item.Spec.Direction) == direction {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	if state := r.URL.Query().Get("state"); state != "" {
+		filtered := make([]rightsizingv1alpha1.RightsizingRecommendation, 0)
+		for _, item := range items {
+			if string(item.Status.State) == state {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	if items == nil {
+		items = []rightsizingv1alpha1.RightsizingRecommendation{}
+	}
+
+	writeJSON(w, items)
+}
+
+func (s *Server) handleGetRecommendation(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, rec)
+}
+
+func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var req ApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "recommendation not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.Status.State != rightsizingv1alpha1.StatePending {
+		http.Error(w, "recommendation is not in pending state", http.StatusConflict)
+		return
+	}
+
+	now := metav1.Now()
+	rec.Status.RevertConfig = &rightsizingv1alpha1.ResourceSpec{
+		CPU:    rec.Spec.Current.CPU,
+		Memory: rec.Spec.Current.Memory,
+	}
+
+	if rec.Spec.HotplugCapable {
+		rec.Status.State = rightsizingv1alpha1.StateApplied
+		rec.Status.AppliedAt = &now
+	} else {
+		rec.Status.State = rightsizingv1alpha1.StateAppliedPendingRestart
+		switch req.RestartOption {
+		case "schedule":
+			t, err := time.Parse(time.RFC3339, req.ScheduledAt)
+			if err != nil {
+				http.Error(w, "invalid scheduledAt format (use RFC3339)", http.StatusBadRequest)
+				return
+			}
+			mt := metav1.NewTime(t)
+			rec.Status.ScheduledRestartAt = &mt
+		case "now":
+			rec.Status.AppliedAt = &now
+		case "later":
+			// No action — user will restart manually
+		}
+	}
+
+	if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+		slog.Error("updating recommendation status", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, rec)
+}
+
+func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	rec := &rightsizingv1alpha1.RightsizingRecommendation{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: namespace}, rec); err != nil {
+		http.Error(w, "recommendation not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.Status.State != rightsizingv1alpha1.StateApplied &&
+		rec.Status.State != rightsizingv1alpha1.StateAppliedPendingRestart {
+		http.Error(w, "recommendation cannot be reverted in current state", http.StatusConflict)
+		return
+	}
+
+	if rec.Status.RevertConfig == nil {
+		http.Error(w, "no revert config available", http.StatusConflict)
+		return
+	}
+
+	rec.Status.State = rightsizingv1alpha1.StateReverted
+	if err := s.K8sClient.Status().Update(r.Context(), rec); err != nil {
+		slog.Error("reverting recommendation", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, rec)
+}
+
+func (s *Server) handleExclude(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	if s.DynamicClient == nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	patch := []byte(`{"metadata":{"annotations":{"` + rightsizingv1alpha1.AnnotationExclude + `":"true"}}}`)
+	_, err := s.DynamicClient.Resource(vmGVR).Namespace(namespace).Patch(
+		r.Context(), name, types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		slog.Error("excluding VM", "namespace", namespace, "name", name, "error", err)
+		http.Error(w, "failed to exclude VM", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "excluded"})
+}
+
+func (s *Server) handleRemoveExclusion(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	if s.DynamicClient == nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	patch := []byte(`{"metadata":{"annotations":{"` + rightsizingv1alpha1.AnnotationExclude + `":null}}}`)
+	_, err := s.DynamicClient.Resource(vmGVR).Namespace(namespace).Patch(
+		r.Context(), name, types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		slog.Error("removing VM exclusion", "namespace", namespace, "name", name, "error", err)
+		http.Error(w, "failed to remove exclusion", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "monitoring resumed"})
+}
+
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	list := &rightsizingv1alpha1.RightsizingRecommendationList{}
+	if err := s.K8sClient.List(r.Context(), list); err != nil {
+		slog.Error("listing recommendations for overview", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	items := s.filterByNamespaceAccess(r, list.Items)
+
+	overview := OverviewResponse{}
+	overview.TotalVMs = len(items)
+
+	today := time.Now().Truncate(24 * time.Hour)
+	for _, item := range items {
+		switch item.Spec.Direction {
+		case rightsizingv1alpha1.DirectionDownsize:
+			if item.Status.State == rightsizingv1alpha1.StatePending {
+				overview.DownsizeCandidates++
+				overview.TotalCPUSavings += item.Spec.Savings.CPU
+				overview.TotalMemorySavings += item.Spec.Savings.Memory.Value()
+			}
+		case rightsizingv1alpha1.DirectionUpsize:
+			if item.Status.State == rightsizingv1alpha1.StatePending {
+				overview.UpsizeNeeded++
+			}
+		}
+
+		if item.Status.AppliedAt != nil && item.Status.AppliedAt.Time.After(today) {
+			overview.AppliedToday++
+		}
+	}
+
+	writeJSON(w, overview)
+}
+
+func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
+	policy := &rightsizingv1alpha1.RightsizingPolicy{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: "default"}, policy); err != nil {
+		policy = &rightsizingv1alpha1.RightsizingPolicy{
+			Spec: rightsizingv1alpha1.DefaultPolicySpec(),
+		}
+	}
+
+	writeJSON(w, policy)
+}
+
+func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var policySpec rightsizingv1alpha1.RightsizingPolicySpec
+	if err := json.NewDecoder(r.Body).Decode(&policySpec); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if policySpec.LookbackDays <= 0 || policySpec.LookbackDays > 365 {
+		http.Error(w, "lookbackDays must be between 1 and 365", http.StatusBadRequest)
+		return
+	}
+	if policySpec.Algorithm.Percentile < 1 || policySpec.Algorithm.Percentile > 100 {
+		http.Error(w, "percentile must be between 1 and 100", http.StatusBadRequest)
+		return
+	}
+	if policySpec.Algorithm.HeadroomPercent < 0 {
+		http.Error(w, "headroomPercent must be non-negative", http.StatusBadRequest)
+		return
+	}
+	if policySpec.Thresholds.MinCPUSavings < 0 {
+		http.Error(w, "minCpuSavings must be non-negative", http.StatusBadRequest)
+		return
+	}
+	if policySpec.Thresholds.UpsizeUtilizationPercent < 1 || policySpec.Thresholds.UpsizeUtilizationPercent > 100 {
+		http.Error(w, "upsizeUtilizationPercent must be between 1 and 100", http.StatusBadRequest)
+		return
+	}
+	if policySpec.ReconcileIntervalMinutes <= 0 {
+		http.Error(w, "reconcileIntervalMinutes must be greater than 0", http.StatusBadRequest)
+		return
+	}
+	if policySpec.RevertRetentionDays <= 0 {
+		http.Error(w, "revertRetentionDays must be greater than 0", http.StatusBadRequest)
+		return
+	}
+
+	policy := &rightsizingv1alpha1.RightsizingPolicy{}
+	key := types.NamespacedName{Name: "default"}
+	if err := s.K8sClient.Get(r.Context(), key, policy); err != nil {
+		http.Error(w, "policy not found", http.StatusNotFound)
+		return
+	}
+
+	policy.Spec = policySpec
+	if err := s.K8sClient.Update(r.Context(), policy); err != nil {
+		slog.Error("updating policy", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, policy)
+}

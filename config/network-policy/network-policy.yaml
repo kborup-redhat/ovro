@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ovro-network-policy
+  namespace: ovro-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ovro
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 9443
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+        - port: 9091
+          protocol: TCP

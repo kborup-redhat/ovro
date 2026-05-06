@@ -1,0 +1,23 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: ovro-github-listener
+  namespace: ovro-system
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    - name: github-push
+      interceptors:
+        - ref:
+            name: "github"
+          params:
+            - name: "secretRef"
+              value:
+                secretName: github-webhook-secret
+                secretKey: token
+            - name: "eventTypes"
+              value: ["push"]
+      bindings:
+        - ref: ovro-github-binding
+      template:
+        ref: ovro-github-template

@@ -1,0 +1,9 @@
+apiVersion: rightsizing.redhatconsulting.io/v1alpha1
+kind: RightsizingRecommendation
+metadata:
+  labels:
+    app.kubernetes.io/name: ovro
+    app.kubernetes.io/managed-by: kustomize
+  name: rightsizingrecommendation-sample
+spec:
+  # TODO(user): Add fields here

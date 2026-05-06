@@ -1,0 +1,23 @@
+[
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "ovro-rightsizing",
+      "name": "Rightsizing",
+      "href": "/k8s/cluster/rightsizing",
+      "perspective": "admin",
+      "section": "virtualization",
+      "insertAfter": "virtualmachines"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": false,
+      "path": "/k8s/cluster/rightsizing",
+      "component": {
+        "$codeRef": "RightsizingNavPage"
+      }
+    }
+  }
+]

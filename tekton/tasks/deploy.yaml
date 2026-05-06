@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ovro-deploy
+  namespace: ovro-system
+spec:
+  params:
+    - name: backend-image
+      type: string
+    - name: plugin-image
+      type: string
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy
+      image: registry.redhat.io/openshift4/ose-cli:v4.17
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/sh
+        set -ex
+
+        # Apply CRDs
+        oc apply -f config/crd/bases/
+
+        # Apply RBAC
+        oc apply -f config/rbac/
+
+        # Apply network policy
+        oc apply -f config/network-policy/
+
+        # Apply cert-manager certificate
+        oc apply -f config/certmanager/ || echo "cert-manager not available, skipping"
+
+        # Apply deployment manifests
+        oc apply -f deploy/
+
+        # Update deployment images (if deployment exists)
+        oc set image deployment/ovro-operator \
+          manager=$(params.backend-image) \
+          -n ovro-system || echo "Deployment not yet created"
+
+        oc set image deployment/ovro-console-plugin \
+          plugin=$(params.plugin-image) \
+          -n ovro-system || echo "Console plugin deployment not yet created"
+
+        echo "Deploy complete"

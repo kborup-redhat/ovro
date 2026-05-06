@@ -1,0 +1,217 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: rightsizingrecommendations.rightsizing.redhatconsulting.io
+spec:
+  group: rightsizing.redhatconsulting.io
+  names:
+    kind: RightsizingRecommendation
+    listKind: RightsizingRecommendationList
+    plural: rightsizingrecommendations
+    singular: rightsizingrecommendation
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.direction
+      name: Direction
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .spec.virtualMachineRef.name
+      name: VM
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              current:
+                properties:
+                  cpu:
+                    properties:
+                      cores:
+                        format: int32
+                        type: integer
+                      sockets:
+                        format: int32
+                        type: integer
+                      threads:
+                        format: int32
+                        type: integer
+                    required:
+                    - cores
+                    - sockets
+                    - threads
+                    type: object
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              direction:
+                type: string
+              hotplugCapable:
+                type: boolean
+              metrics:
+                properties:
+                  cpuMaxPercent:
+                    type: number
+                  cpuP95Percent:
+                    type: number
+                  lookbackDays:
+                    type: integer
+                  memoryMaxPercent:
+                    type: number
+                  memoryP95Percent:
+                    type: number
+                required:
+                - cpuMaxPercent
+                - cpuP95Percent
+                - lookbackDays
+                - memoryMaxPercent
+                - memoryP95Percent
+                type: object
+              recommended:
+                properties:
+                  cpu:
+                    properties:
+                      cores:
+                        format: int32
+                        type: integer
+                      sockets:
+                        format: int32
+                        type: integer
+                      threads:
+                        format: int32
+                        type: integer
+                    required:
+                    - cores
+                    - sockets
+                    - threads
+                    type: object
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              savings:
+                properties:
+                  cpu:
+                    format: int32
+                    type: integer
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              virtualMachineRef:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+            required:
+            - current
+            - direction
+            - hotplugCapable
+            - metrics
+            - recommended
+            - savings
+            - virtualMachineRef
+            type: object
+          status:
+            properties:
+              appliedAt:
+                format: date-time
+                type: string
+              lastCalculated:
+                format: date-time
+                type: string
+              message:
+                type: string
+              revertBefore:
+                format: date-time
+                type: string
+              revertConfig:
+                properties:
+                  cpu:
+                    properties:
+                      cores:
+                        format: int32
+                        type: integer
+                      sockets:
+                        format: int32
+                        type: integer
+                      threads:
+                        format: int32
+                        type: integer
+                    required:
+                    - cores
+                    - sockets
+                    - threads
+                    type: object
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              scheduledRestartAt:
+                format: date-time
+                type: string
+              state:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

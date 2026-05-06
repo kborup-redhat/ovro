@@ -1,0 +1,22 @@
+apiVersion: rightsizing.redhatconsulting.io/v1alpha1
+kind: RightsizingPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: ovro
+    app.kubernetes.io/managed-by: kustomize
+  name: rightsizingpolicy-sample
+spec:
+  lookbackDays: 14
+  algorithm:
+    percentile: 95
+    headroomPercent: 20
+  thresholds:
+    minCpuSavings: 1
+    minMemorySavings: 1Gi
+    upsizeUtilizationPercent: 90
+  revertRetentionDays: 30
+  autoMode:
+    enabled: false
+    schedule: "0 2 * * *"
+    requireApproval: true
+  reconcileIntervalMinutes: 60

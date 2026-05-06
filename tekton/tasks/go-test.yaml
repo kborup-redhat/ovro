@@ -1,0 +1,22 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ovro-go-test
+  namespace: ovro-system
+spec:
+  workspaces:
+    - name: source
+  steps:
+    - name: test
+      image: golang:1.26
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: GOMODCACHE
+          value: $(workspaces.source.path)/.cache/go/mod
+        - name: GOCACHE
+          value: $(workspaces.source.path)/.cache/go/build
+      script: |
+        #!/bin/sh
+        set -ex
+        mkdir -p $GOMODCACHE $GOCACHE
+        go test -buildvcs=false $(go list -buildvcs=false ./... | grep -v /test/e2e) -v -count=1
