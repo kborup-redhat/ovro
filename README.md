@@ -1,5 +1,7 @@
 # OVRO — OpenShift Virtualization Rightsizing Operator
 
+> **This is a proof-of-concept (POC) operator. It is not a Red Hat product and is not supported by Red Hat in any way. Use at your own risk.**
+
 OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShift, generates rightsizing recommendations, and lets cluster administrators apply or revert changes through an OpenShift Console dynamic plugin. It includes an optional approval workflow that routes changes through VM owners before applying, with notifications via Slack, Teams, email, and other channels.
 
 ## Features
