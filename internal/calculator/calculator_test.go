@@ -38,19 +38,19 @@ func TestRecommendDownsize(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
 	result := calculator.Analyze(input)
 
 	require.NotNil(t, result)
 	assert.Equal(t, calculator.Downsize, result.Direction)
-	// P95 CPU = 28.3% of 8 cores = 2.264 cores. *1.20 = 2.717 → ceil = 3 cores
 	assert.Equal(t, int32(3), result.RecommendedCPUCores)
-	// P95 Mem = 41.7% of 16 GiB = 6.672 GiB. *1.20 = 8.006 → ceil = 9 GiB
 	assert.Equal(t, int32(9), result.RecommendedMemoryGiB)
-	// Savings: 8-3=5 cores, 16-9=7 GiB — both > 1, so recommendation generated
 	assert.Equal(t, int32(5), result.CPUSavings)
 	assert.Equal(t, int32(7), result.MemorySavings)
+	assert.Contains(t, result.Reason, "only 28.3% utilized")
+	assert.Contains(t, result.Reason, "save 5 cores")
 }
 
 func TestRecommendDownsize_BelowThreshold(t *testing.T) {
@@ -65,6 +65,7 @@ func TestRecommendDownsize_BelowThreshold(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
 	result := calculator.Analyze(input)
@@ -85,16 +86,18 @@ func TestRecommendUpsize(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
 	result := calculator.Analyze(input)
 
 	require.NotNil(t, result)
 	assert.Equal(t, calculator.Upsize, result.Direction)
-	// CPU: P95 usage = 94% of 4 = 3.76 cores. Target = 3.76/0.70 = 5.37 → ceil = 6
+	// Max is higher, so sizing uses max: CPU 99% of 4 = 3.96 / 0.70 = 5.66 → ceil = 6
 	assert.Equal(t, int32(6), result.RecommendedCPUCores)
-	// Mem: P95 usage = 92% of 8 = 7.36 GiB. Target = 7.36/0.70 = 10.51 → ceil = 11
-	assert.Equal(t, int32(11), result.RecommendedMemoryGiB)
+	// Mem: max 97% of 8 = 7.76 / 0.70 = 11.09 → ceil = 12
+	assert.Equal(t, int32(12), result.RecommendedMemoryGiB)
+	assert.Contains(t, result.Reason, "sustained utilization")
 }
 
 func TestRecommendUpsize_BelowThreshold(t *testing.T) {
@@ -109,6 +112,7 @@ func TestRecommendUpsize_BelowThreshold(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
 	result := calculator.Analyze(input)
@@ -132,6 +136,7 @@ func TestRecommendDownsize_ExactThreshold(t *testing.T) {
 		MinCPUSavings:       2,
 		MinMemorySavingsGiB: 2,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
 	result := calculator.Analyze(input)
@@ -157,11 +162,34 @@ func TestNoRecommendation_NormalUtilization(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
 	}
 
-	// CPU: 75% of 4 = 3.0, *1.20 = 3.6 → ceil = 4. Savings = 0.
-	// Mem: 75% of 8 = 6.0, *1.20 = 7.2 → ceil = 8. Savings = 0.
-	// No savings, no recommendation.
 	result := calculator.Analyze(input)
 	assert.Nil(t, result)
+}
+
+func TestRecommendUpsize_SpikeDetection(t *testing.T) {
+	input := calculator.AnalysisInput{
+		CurrentCPUCores:     8,
+		CurrentMemoryGiB:    16,
+		CPUP95Percent:       35.0,
+		MemoryP95Percent:    55.0,
+		CPUMaxPercent:       95.0,
+		MemoryMaxPercent:    80.0,
+		HeadroomPercent:     20,
+		MinCPUSavings:       1,
+		MinMemorySavingsGiB: 1,
+		UpsizeThresholdPct:  90,
+		LookbackDays:        14,
+	}
+
+	result := calculator.Analyze(input)
+
+	require.NotNil(t, result)
+	assert.Equal(t, calculator.Upsize, result.Direction)
+	// Max CPU 95% of 8 = 7.6 / 0.70 = 10.86 → ceil = 11
+	assert.Equal(t, int32(11), result.RecommendedCPUCores)
+	assert.Contains(t, result.Reason, "spike")
+	assert.Contains(t, result.Reason, "95.0%")
 }

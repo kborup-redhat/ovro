@@ -91,6 +91,7 @@ type RightsizingRecommendationSpec struct {
 	Savings           SavingsSpec             `json:"savings"`
 	Metrics           MetricsSnapshot         `json:"metrics"`
 	HotplugCapable    bool                    `json:"hotplugCapable"`
+	Reason            string                  `json:"reason,omitempty"`
 }
 
 type RightsizingRecommendationStatus struct {

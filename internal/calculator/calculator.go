@@ -1,6 +1,7 @@
 package calculator
 
 import (
+	"fmt"
 	"math"
 	"sort"
 )
@@ -27,6 +28,7 @@ type AnalysisInput struct {
 	MinCPUSavings       int32
 	MinMemorySavingsGiB int32
 	UpsizeThresholdPct  int
+	LookbackDays        int
 }
 
 // AnalysisResult contains the rightsizing recommendation.
@@ -36,6 +38,7 @@ type AnalysisResult struct {
 	RecommendedMemoryGiB int32
 	CPUSavings           int32
 	MemorySavings        int32
+	Reason               string
 }
 
 // ComputePercentile calculates the given percentile from a slice of samples
@@ -66,9 +69,10 @@ func ComputePercentile(samples []float64, percentile int) float64 {
 // Analyze evaluates the given metrics and returns a rightsizing recommendation,
 // or nil if no action is needed. Upsize is checked first as it is more urgent.
 func Analyze(input AnalysisInput) *AnalysisResult {
-	// Check for upsize first (more urgent)
-	if input.CPUP95Percent >= float64(input.UpsizeThresholdPct) ||
-		input.MemoryP95Percent >= float64(input.UpsizeThresholdPct) {
+	threshold := float64(input.UpsizeThresholdPct)
+
+	if input.CPUP95Percent >= threshold || input.MemoryP95Percent >= threshold ||
+		input.CPUMaxPercent >= threshold || input.MemoryMaxPercent >= threshold {
 		return analyzeUpsize(input)
 	}
 
@@ -111,12 +115,17 @@ func analyzeDownsize(input AnalysisInput) *AnalysisResult {
 		RecommendedMemoryGiB: recommendedMem,
 		CPUSavings:           cpuSavings,
 		MemorySavings:        memSavings,
+		Reason: fmt.Sprintf("CPU only %.1f%% utilized (P95 over %dd), can save %d cores",
+			input.CPUP95Percent, input.LookbackDays, cpuSavings),
 	}
 }
 
 func analyzeUpsize(input AnalysisInput) *AnalysisResult {
-	cpuUsageCores := float64(input.CurrentCPUCores) * input.CPUP95Percent / 100.0
-	memUsageGiB := float64(input.CurrentMemoryGiB) * input.MemoryP95Percent / 100.0
+	cpuPct := math.Max(input.CPUP95Percent, input.CPUMaxPercent)
+	memPct := math.Max(input.MemoryP95Percent, input.MemoryMaxPercent)
+
+	cpuUsageCores := float64(input.CurrentCPUCores) * cpuPct / 100.0
+	memUsageGiB := float64(input.CurrentMemoryGiB) * memPct / 100.0
 
 	recommendedCPU := int32(math.Ceil(cpuUsageCores / 0.70))
 	recommendedMem := int32(math.Ceil(memUsageGiB / 0.70))
@@ -135,11 +144,25 @@ func analyzeUpsize(input AnalysisInput) *AnalysisResult {
 		return nil
 	}
 
+	threshold := float64(input.UpsizeThresholdPct)
+	spikeTriggered := (input.CPUMaxPercent >= threshold && input.CPUP95Percent < threshold) ||
+		(input.MemoryMaxPercent >= threshold && input.MemoryP95Percent < threshold)
+
+	var reason string
+	if spikeTriggered {
+		reason = fmt.Sprintf("CPU spikes to %.1f%% (sustained P95: %.1f%% over %dd)",
+			input.CPUMaxPercent, input.CPUP95Percent, input.LookbackDays)
+	} else {
+		reason = fmt.Sprintf("CPU at %.1f%% sustained utilization (P95 over %dd)",
+			input.CPUP95Percent, input.LookbackDays)
+	}
+
 	return &AnalysisResult{
 		Direction:            Upsize,
 		RecommendedCPUCores:  recommendedCPU,
 		RecommendedMemoryGiB: recommendedMem,
 		CPUSavings:           -cpuIncrease,
 		MemorySavings:        -memIncrease,
+		Reason:               reason,
 	}
 }

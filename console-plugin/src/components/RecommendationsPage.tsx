@@ -24,6 +24,18 @@ interface Props {
   onRightsize: (rec: RightsizingRecommendation) => void;
 }
 
+function formatReason(rec: RightsizingRecommendation): string {
+  const p95 = rec.spec.metrics.cpuP95Percent.toFixed(1);
+  const max = rec.spec.metrics.cpuMaxPercent.toFixed(1);
+  if (rec.spec.direction === 'upsize') {
+    if (Number(max) > Number(p95) + 10) {
+      return `CPU spikes to ${max}% (sustained P95: ${p95}%)`;
+    }
+    return `CPU at ${p95}% sustained utilization`;
+  }
+  return `CPU only ${p95}% utilized, saves ${Math.abs(rec.spec.savings.cpu)} cores`;
+}
+
 export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
   const [recs, setRecs] = useState<RightsizingRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,8 +157,7 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
             <Th>Direction</Th>
             <Th>CPU</Th>
             <Th>Memory</Th>
-            <Th>P95 CPU</Th>
-            <Th>P95 Mem</Th>
+            <Th>Reason</Th>
             <Th>Hotplug</Th>
             <Th>Status</Th>
             <Th>Actions</Th>
@@ -160,8 +171,7 @@ export const RecommendationsPage: React.FC<Props> = ({ onRightsize }) => {
               <Td>{directionLabel(rec.spec.direction)}</Td>
               <Td>{rec.spec.current.cpu.cores} &rarr; {rec.spec.recommended.cpu.cores}</Td>
               <Td>{rec.spec.current.memory} &rarr; {rec.spec.recommended.memory}</Td>
-              <Td>{rec.spec.metrics.cpuP95Percent}%</Td>
-              <Td>{rec.spec.metrics.memoryP95Percent}%</Td>
+              <Td>{rec.spec.reason || formatReason(rec)}</Td>
               <Td>{rec.spec.hotplugCapable ? 'Yes' : 'No'}</Td>
               <Td>{stateLabel(rec.status.state)}</Td>
               <Td>{getActionButton(rec)}</Td>

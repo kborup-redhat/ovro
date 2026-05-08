@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -180,6 +181,7 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 			MinCPUSavings:       policy.Spec.Thresholds.MinCPUSavings,
 			MinMemorySavingsGiB: int32(policy.Spec.Thresholds.MinMemorySavings.Value() / (1024 * 1024 * 1024)),
 			UpsizeThresholdPct:  policy.Spec.Thresholds.UpsizeUtilizationPercent,
+			LookbackDays:        policy.Spec.LookbackDays,
 		}
 
 		result = calculator.Analyze(input)
@@ -222,11 +224,12 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 				},
 				Metrics: rightsizingv1alpha1.MetricsSnapshot{
 					LookbackDays:     policy.Spec.LookbackDays,
-					CPUP95Percent:    utilization.CPUP95Percent,
-					MemoryP95Percent: utilization.MemoryP95Percent,
-					CPUMaxPercent:    utilization.CPUMaxPercent,
-					MemoryMaxPercent: utilization.MemoryMaxPercent,
+					CPUP95Percent:    round1(utilization.CPUP95Percent),
+					MemoryP95Percent: round1(utilization.MemoryP95Percent),
+					CPUMaxPercent:    round1(utilization.CPUMaxPercent),
+					MemoryMaxPercent: round1(utilization.MemoryMaxPercent),
 				},
+				Reason: result.Reason,
 			},
 		}
 
@@ -303,6 +306,14 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 			CPU:    result.CPUSavings,
 			Memory: resource.MustParse(fmt.Sprintf("%dGi", abs(result.MemorySavings))),
 		}
+		rec.Spec.Metrics = rightsizingv1alpha1.MetricsSnapshot{
+			LookbackDays:     policy.Spec.LookbackDays,
+			CPUP95Percent:    round1(utilization.CPUP95Percent),
+			MemoryP95Percent: round1(utilization.MemoryP95Percent),
+			CPUMaxPercent:    round1(utilization.CPUMaxPercent),
+			MemoryMaxPercent: round1(utilization.MemoryMaxPercent),
+		}
+		rec.Spec.Reason = result.Reason
 
 		if err := r.Update(ctx, rec); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating recommendation: %w", err)
@@ -450,6 +461,10 @@ func abs(n int32) int32 {
 		return -n
 	}
 	return n
+}
+
+func round1(v float64) float64 {
+	return math.Round(v*10) / 10
 }
 
 func demoDirection(vmName string) string {

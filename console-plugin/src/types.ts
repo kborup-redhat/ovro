@@ -42,6 +42,7 @@ export interface RightsizingRecommendation {
     savings: { cpu: number; memory: string };
     metrics: MetricsSnapshot;
     hotplugCapable: boolean;
+    reason?: string;
   };
   status: {
     state: RecommendationState;
