@@ -72,6 +72,9 @@ func (r *RightsizingRecommendationReconciler) getVM(ctx context.Context, name, n
 	}
 
 	memStr, found, _ := unstructured.NestedString(vm.Object, "spec", "template", "spec", "domain", "resources", "requests", "memory")
+	if !found {
+		memStr, found, _ = unstructured.NestedString(vm.Object, "spec", "template", "spec", "domain", "memory", "guest")
+	}
 	if found {
 		q, parseErr := resource.ParseQuantity(memStr)
 		if parseErr == nil {
