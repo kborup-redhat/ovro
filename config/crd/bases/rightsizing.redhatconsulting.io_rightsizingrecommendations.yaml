@@ -101,6 +101,8 @@ spec:
                 - memoryMaxPercent
                 - memoryP95Percent
                 type: object
+              reason:
+                type: string
               recommended:
                 properties:
                   cpu:
