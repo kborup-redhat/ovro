@@ -155,7 +155,8 @@ func TestGetVMUtilization(t *testing.T) {
 	defer server.Close()
 
 	client := prometheus.NewClient(server.URL)
-	util, err := client.GetVMUtilization(context.Background(), "test-vm", "default", 14)
+	// 100 cores total, 100 bytes total — raw values 10-100 become 10%-100%
+	util, err := client.GetVMUtilization(context.Background(), "test-vm", "default", 14, 100, 100)
 
 	require.NoError(t, err)
 	assert.Greater(t, util.CPUP95Percent, 0.0)
@@ -179,7 +180,7 @@ func TestGetVMUtilization_EmptyMetrics(t *testing.T) {
 	defer server.Close()
 
 	client := prometheus.NewClient(server.URL)
-	util, err := client.GetVMUtilization(context.Background(), "test-vm", "default", 14)
+	util, err := client.GetVMUtilization(context.Background(), "test-vm", "default", 14, 4, 8589934592)
 
 	require.NoError(t, err)
 	assert.Equal(t, 0.0, util.CPUP95Percent)

@@ -76,9 +76,9 @@ type prometheusAdapter struct {
 }
 
 func (a *prometheusAdapter) GetVMUtilization(
-	ctx context.Context, vmName, namespace string, lookbackDays int,
+	ctx context.Context, vmName, namespace string, lookbackDays int, cpuCores int32, memoryBytes int64,
 ) (*controller.VMUtilization, error) {
-	u, err := a.client.GetVMUtilization(ctx, vmName, namespace, lookbackDays)
+	u, err := a.client.GetVMUtilization(ctx, vmName, namespace, lookbackDays, cpuCores, memoryBytes)
 	if err != nil {
 		return nil, err
 	}

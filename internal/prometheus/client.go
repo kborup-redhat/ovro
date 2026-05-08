@@ -170,21 +170,38 @@ func (c *Client) GetVMMetrics(ctx context.Context, vmName, namespace string, loo
 }
 
 // GetVMUtilization fetches VM metrics and computes P95 and max utilization percentages.
-func (c *Client) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*VMUtilization, error) {
+// cpuCores is the VM's total CPU cores; memoryBytes is the VM's total memory in bytes.
+// Raw rate() values (cores) and raw bytes are converted to percentages (0-100).
+func (c *Client) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int, cpuCores int32, memoryBytes int64) (*VMUtilization, error) {
 	metrics, err := c.GetVMMetrics(ctx, vmName, namespace, lookbackDays)
 	if err != nil {
 		return nil, fmt.Errorf("fetching VM metrics: %w", err)
 	}
 
+	cpuPct := toPercent(metrics.CPUSamples, float64(cpuCores))
+	memPct := toPercent(metrics.MemorySamples, float64(memoryBytes))
+
 	utilization := &VMUtilization{
-		CPUP95Percent:    calculator.ComputePercentile(metrics.CPUSamples, 95),
-		MemoryP95Percent: calculator.ComputePercentile(metrics.MemorySamples, 95),
-		CPUMaxPercent:    maxValue(metrics.CPUSamples),
-		MemoryMaxPercent: maxValue(metrics.MemorySamples),
+		CPUP95Percent:    calculator.ComputePercentile(cpuPct, 95),
+		MemoryP95Percent: calculator.ComputePercentile(memPct, 95),
+		CPUMaxPercent:    maxValue(cpuPct),
+		MemoryMaxPercent: maxValue(memPct),
 		DataPoints:       len(metrics.CPUSamples),
 	}
 
 	return utilization, nil
+}
+
+// toPercent converts raw metric values to percentages (0-100) given a total.
+func toPercent(samples []float64, total float64) []float64 {
+	if total <= 0 {
+		return samples
+	}
+	pct := make([]float64, len(samples))
+	for i, v := range samples {
+		pct[i] = v / total * 100.0
+	}
+	return pct
 }
 
 // GetContainerMetrics fetches CPU and memory metrics for a specific container.

@@ -27,7 +27,7 @@ type mockPrometheusClient struct {
 	shouldErr  bool
 }
 
-func (m *mockPrometheusClient) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*controller.VMUtilization, error) {
+func (m *mockPrometheusClient) GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int, cpuCores int32, memoryBytes int64) (*controller.VMUtilization, error) {
 	if m.shouldErr {
 		return nil, assert.AnError
 	}

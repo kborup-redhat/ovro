@@ -54,7 +54,7 @@ type VMUtilization struct {
 
 // PrometheusQuerier abstracts Prometheus queries for testability.
 type PrometheusQuerier interface {
-	GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int) (*VMUtilization, error)
+	GetVMUtilization(ctx context.Context, vmName, namespace string, lookbackDays int, cpuCores int32, memoryBytes int64) (*VMUtilization, error)
 }
 
 // getVM fetches a VirtualMachine object and extracts CPU cores, memory, and exclusion status.
@@ -149,8 +149,9 @@ func (r *RightsizingRecommendationReconciler) Reconcile(ctx context.Context, req
 		result.MemorySavings = memoryGiB - result.RecommendedMemoryGiB
 	} else {
 		// Query Prometheus for VM utilization metrics.
+		memoryBytes := int64(memoryGiB) * 1024 * 1024 * 1024
 		var err2 error
-		utilization, err2 = r.PromClient.GetVMUtilization(ctx, req.Name, req.Namespace, policy.Spec.LookbackDays)
+		utilization, err2 = r.PromClient.GetVMUtilization(ctx, req.Name, req.Namespace, policy.Spec.LookbackDays, cpuCores, memoryBytes)
 		if err2 != nil {
 			log.Error(err2, "Failed to query Prometheus")
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
