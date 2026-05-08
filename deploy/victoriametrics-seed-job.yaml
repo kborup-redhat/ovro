@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: victoriametrics-seed
+  namespace: ovro-system
+  labels:
+    app.kubernetes.io/name: victoriametrics-seed
+    app.kubernetes.io/part-of: ovro
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: victoriametrics-seed
+        app.kubernetes.io/part-of: ovro
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: ovro-controller-manager
+      containers:
+        - name: seed
+          image: docker.io/victoriametrics/vmctl:v1.141.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              /vmctl-prod remote-read \
+                -s \
+                --disable-progress-bar \
+                --remote-read-src-addr=https://prometheus-k8s.openshift-monitoring.svc:9091 \
+                --remote-read-filter-time-start=${SEED_START} \
+                --remote-read-step-interval=hour \
+                --remote-read-filter-label=__name__ \
+                --remote-read-filter-label-value="kubevirt_vmi_cpu_usage_seconds_total|kubevirt_vmi_memory_resident_bytes|container_cpu_usage_seconds_total|container_memory_working_set_bytes|kube_pod_container_resource_requests|kube_pod_container_resource_limits|kube_node_status_allocatable|kube_node_info|kube_node_status_condition" \
+                --remote-read-headers="Authorization:Bearer ${TOKEN}" \
+                --remote-read-insecure-skip-verify \
+                --vm-addr=http://victoriametrics.ovro-system.svc:8428 \
+                --vm-concurrency=2
+          env:
+            - name: SEED_START
+              value: "2026-02-07T00:00:00Z"
+            - name: TERM
+              value: dumb
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi

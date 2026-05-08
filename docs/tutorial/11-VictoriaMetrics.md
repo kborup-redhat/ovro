@@ -82,6 +82,30 @@ The `writeRelabelConfigs` with `keep` ensures only the metrics OVRO and RRRT nee
 | `kube_node_info` | RRRT (cluster overview) |
 | `kube_node_status_condition` | RRRT (cluster overview) |
 
+## Seeding Historical Data
+
+Remote-write only forwards metrics from the moment the config is applied. To import existing historical data from Prometheus into VictoriaMetrics, run the seed Job:
+
+```bash
+oc apply -f deploy/victoriametrics-seed-job.yaml
+```
+
+The seed Job uses `vmctl remote-read` to pull all matching metrics from Thanos Querier into VictoriaMetrics. By default it imports from 90 days ago. Edit the `SEED_START` environment variable to adjust the start date:
+
+```yaml
+env:
+  - name: SEED_START
+    value: "2026-02-07T00:00:00Z"
+```
+
+Monitor the seed progress:
+
+```bash
+oc -n ovro-system logs -f job/victoriametrics-seed
+```
+
+The Job processes data in daily chunks and typically completes within minutes for the filtered metric set. After completion, VictoriaMetrics has both the historical backfill and ongoing remote-write data — no gaps.
+
 ## Verifying Metrics Flow
 
 After applying the remote-write config, verify that metrics are arriving in VictoriaMetrics:

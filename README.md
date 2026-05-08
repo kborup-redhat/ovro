@@ -6,7 +6,8 @@ OVRO analyses CPU and memory utilisation of KubeVirt virtual machines on OpenShi
 
 ## Features
 
-- **Automated analysis** — queries Prometheus/Thanos for P95 and max utilisation over a configurable lookback window.
+- **Long-term metrics storage** — deploys VictoriaMetrics as a dedicated TSDB with 90-day retention, seeded with historical data from Prometheus at install time.
+- **Automated analysis** — queries VictoriaMetrics (or Prometheus/Thanos) for P95 and max utilisation over a configurable lookback window.
 - **Rightsizing calculator** — recommends downsize or upsize with configurable headroom, minimum-savings thresholds, and percentile tuning.
 - **Hotplug-aware** — detects live CPU/memory hotplug capability; applies changes without restart when possible.
 - **Console plugin** — browse recommendations, apply/revert changes, exclude VMs, and view cluster-wide savings from the OpenShift Console.
@@ -42,11 +43,22 @@ Admin clicks "Rightsize" on VM with owner label
 
 Approval tokens expire after 14 days. A reminder notification is sent at 7 days (except to ServiceNow, since the ticket already exists).
 
+## Container Images
+
+OVRO uses the following container images. For disconnected/air-gapped environments, mirror these to your internal registry before installation.
+
+| Image | Purpose |
+|-------|---------|
+| `<REGISTRY>/ovro-backend:<TAG>` | Operator, recommendation controller, REST API server (built from source) |
+| `<REGISTRY>/ovro-console-plugin:<TAG>` | OpenShift Console dynamic plugin (built from source) |
+| `<REGISTRY>/ovro-approval-proxy:<TAG>` | Approval workflow proxy (built from source, optional) |
+| `docker.io/victoriametrics/victoria-metrics:v1.141.0` | Long-term metrics storage |
+| `docker.io/victoriametrics/vmctl:v1.141.0` | One-time historical data seed job |
+
 ## Prerequisites
 
 - OpenShift 4.14+ (tested on 4.18)
 - OpenShift Virtualization (KubeVirt) installed with running VMs
-- Prometheus / Thanos Querier available in-cluster (default: `https://thanos-querier.openshift-monitoring.svc:9091`)
 - `oc` CLI logged in as cluster-admin
 - A container image registry accessible from the cluster (e.g., the internal OpenShift registry or Quay)
 
@@ -77,7 +89,64 @@ oc apply -f config/rbac/leader_election_role.yaml
 oc apply -f config/rbac/leader_election_role_binding.yaml
 ```
 
-### 4. Build and push container images
+### 4. Deploy VictoriaMetrics
+
+VictoriaMetrics provides long-term metrics storage with 90-day retention, replacing direct Prometheus/Thanos queries.
+
+```bash
+oc apply -f deploy/victoriametrics-statefulset.yaml
+oc apply -f deploy/victoriametrics-service.yaml
+oc apply -f deploy/victoriametrics-networkpolicy.yaml
+```
+
+Wait for the pod to be ready:
+
+```bash
+oc -n ovro-system wait --for=condition=ready pod -l app.kubernetes.io/name=victoriametrics --timeout=120s
+```
+
+### 5. Configure Prometheus remote-write
+
+A cluster-admin must configure platform Prometheus to forward metrics to VictoriaMetrics. If the ConfigMap doesn't exist yet, create it; otherwise edit it to add the `remoteWrite` section:
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    prometheusK8s:
+      remoteWrite:
+        - url: "http://victoriametrics.ovro-system.svc:8428/api/v1/write"
+          writeRelabelConfigs:
+            - sourceLabels: [__name__]
+              regex: "kubevirt_vmi_cpu_usage_seconds_total|kubevirt_vmi_memory_resident_bytes|container_cpu_usage_seconds_total|container_memory_working_set_bytes|kube_pod_container_resource_requests|kube_pod_container_resource_limits|kube_node_status_allocatable|kube_node_info|kube_node_status_condition"
+              action: keep
+EOF
+```
+
+> **Note:** If `cluster-monitoring-config` already exists with other settings, merge the `remoteWrite` section into the existing `prometheusK8s` key rather than replacing it.
+
+### 6. Seed historical data
+
+Remote-write only forwards new data. To import existing historical data from Prometheus into VictoriaMetrics, run the seed job:
+
+```bash
+oc apply -f deploy/victoriametrics-seed-job.yaml
+```
+
+Edit the `SEED_START` env var in the job manifest to match how far back your Prometheus has data (default: 90 days ago). Monitor progress:
+
+```bash
+oc -n ovro-system logs -f job/victoriametrics-seed
+```
+
+The job reads from Prometheus via the remote-read API in hourly chunks and typically completes within minutes.
+
+### 7. Build and push container images
 
 OVRO consists of three container images. Replace `<REGISTRY>` with your registry (e.g., `quay.io/yourorg` or `image-registry.openshift-image-registry.svc:5000/ovro-system`).
 
@@ -100,7 +169,7 @@ podman build -f Dockerfile.approval-proxy -t ${REGISTRY}/ovro-approval-proxy:${T
 podman push ${REGISTRY}/ovro-approval-proxy:${TAG}
 ```
 
-### 5. Deploy the backend
+### 8. Deploy the backend
 
 Edit `config/manager/manager.yaml` and set the container image to your registry path, then apply:
 
@@ -111,7 +180,7 @@ oc apply -f deploy/backend-service.yaml
 
 The backend starts listening on port 8443 with TLS certificates auto-generated by the OpenShift service-ca operator (via the `service.beta.openshift.io/serving-cert-secret-name` annotation on the Service).
 
-### 6. Deploy the console plugin
+### 9. Deploy the console plugin
 
 Edit `deploy/console-plugin-deployment.yaml` and update the image reference to your registry, then apply:
 
@@ -130,7 +199,7 @@ oc patch console.operator.openshift.io cluster \
 
 Refresh the OpenShift Console. The **Rightsizing** tab appears in the left navigation under **Virtualization**.
 
-### 7. Create a default RightsizingPolicy
+### 10. Create a default RightsizingPolicy
 
 ```bash
 oc apply -f config/samples/rightsizingpolicy.yaml
@@ -138,7 +207,7 @@ oc apply -f config/samples/rightsizingpolicy.yaml
 
 This creates a cluster-scoped `RightsizingPolicy` named `default` with sensible defaults (14-day lookback, P95 percentile, 20% headroom). You can edit these values from the Policy tab in the console or via `oc edit rightsizingpolicy default`.
 
-### 8. Verify the installation
+### 11. Verify the installation
 
 ```bash
 # Check all pods are running
@@ -433,6 +502,8 @@ The `RightsizingPolicy` CR controls operator behaviour. Create one named `defaul
 | `thresholds.upsizeUtilizationPercent` | 90 | P95 above this triggers upsize |
 | `reconcileIntervalMinutes` | 60 | How often to re-evaluate each VM |
 | `revertRetentionDays` | 30 | Days a revert option stays available |
+| `metricsStorage.retentionDays` | 90 | VictoriaMetrics data retention period |
+| `metricsStorage.storageSize` | 50Gi | VictoriaMetrics PVC size |
 
 ### Environment Variables
 
@@ -492,10 +563,17 @@ oc patch console.operator.openshift.io cluster \
   --type=merge \
   --patch='{"spec":{"plugins":[]}}'
 
-# Delete all OVRO resources
+# Remove the Prometheus remote-write config
+# Edit cluster-monitoring-config and remove the remoteWrite section:
+oc -n openshift-monitoring edit configmap cluster-monitoring-config
+
+# Delete all OVRO resources (including VictoriaMetrics)
 oc delete -f deploy/
 oc delete -f config/rbac/
 oc delete -f config/crd/bases/
+
+# Delete VictoriaMetrics PVC
+oc -n ovro-system delete pvc data-victoriametrics-0
 
 # Delete the namespace
 oc delete namespace ovro-system
