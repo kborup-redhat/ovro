@@ -205,7 +205,7 @@ Refresh the OpenShift Console. The **Rightsizing** tab appears in the left navig
 oc apply -f config/samples/rightsizingpolicy.yaml
 ```
 
-This creates a cluster-scoped `RightsizingPolicy` named `default` with sensible defaults (14-day lookback, P95 percentile, 20% headroom). You can edit these values from the Policy tab in the console or via `oc edit rightsizingpolicy default`.
+This creates a cluster-scoped `RightsizingPolicy` named `default` with sensible defaults (30-day lookback, P95 percentile, 20% headroom). You can edit these values from the Policy tab in the console or via `oc edit rightsizingpolicy default`.
 
 ### 11. Verify the installation
 
@@ -494,7 +494,7 @@ The `RightsizingPolicy` CR controls operator behaviour. Create one named `defaul
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `lookbackDays` | 14 | Days of metric history to analyse |
+| `lookbackDays` | 30 | Days of metric history to analyse |
 | `algorithm.percentile` | 95 | Utilisation percentile for sizing |
 | `algorithm.headroomPercent` | 20 | Extra capacity above the percentile |
 | `thresholds.minCpuSavings` | 1 | Minimum CPU core savings to recommend |

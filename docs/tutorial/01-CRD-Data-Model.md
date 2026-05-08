@@ -109,7 +109,7 @@ type RightsizingPolicySpec struct {
 }
 ```
 
-- **LookbackDays** — how many days of metric history to analyse (default: 14).
+- **LookbackDays** — how many days of metric history to analyse (default: 30).
 - **Algorithm.Percentile** — which percentile to use (default: P95). P99 is more conservative; P50 is more aggressive.
 - **Algorithm.HeadroomPercent** — extra capacity above the percentile (default: 20%). A 20% headroom means "if P95 CPU is 4 cores, recommend 4.8, rounded up to 5."
 - **Thresholds** — minimum savings required to generate a recommendation, preventing trivial changes.
@@ -122,7 +122,7 @@ type RightsizingPolicySpec struct {
 
 func DefaultPolicySpec() RightsizingPolicySpec {
     return RightsizingPolicySpec{
-        LookbackDays: 14,
+        LookbackDays: 30,
         Algorithm: AlgorithmSpec{
             Percentile:      95,
             HeadroomPercent: 20,

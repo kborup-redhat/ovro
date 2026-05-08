@@ -140,19 +140,26 @@ func analyzeUpsize(input AnalysisInput) *AnalysisResult {
 	cpuIncrease := recommendedCPU - input.CurrentCPUCores
 	memIncrease := recommendedMem - input.CurrentMemoryGiB
 
-	if cpuIncrease < input.MinCPUSavings || memIncrease < input.MinMemorySavingsGiB {
+	if cpuIncrease < input.MinCPUSavings && memIncrease < input.MinMemorySavingsGiB {
 		return nil
 	}
 
 	threshold := float64(input.UpsizeThresholdPct)
-	spikeTriggered := (input.CPUMaxPercent >= threshold && input.CPUP95Percent < threshold) ||
-		(input.MemoryMaxPercent >= threshold && input.MemoryP95Percent < threshold)
+	cpuSpike := input.CPUMaxPercent >= threshold && input.CPUP95Percent < threshold
+	memSpike := input.MemoryMaxPercent >= threshold && input.MemoryP95Percent < threshold
 
 	var reason string
-	if spikeTriggered {
+	switch {
+	case cpuSpike && memSpike:
+		reason = fmt.Sprintf("CPU spikes to %.1f%% and memory spikes to %.1f%% (sustained P95: %.1f%%/%.1f%% over %dd)",
+			input.CPUMaxPercent, input.MemoryMaxPercent, input.CPUP95Percent, input.MemoryP95Percent, input.LookbackDays)
+	case cpuSpike:
 		reason = fmt.Sprintf("CPU spikes to %.1f%% (sustained P95: %.1f%% over %dd)",
 			input.CPUMaxPercent, input.CPUP95Percent, input.LookbackDays)
-	} else {
+	case memSpike:
+		reason = fmt.Sprintf("Memory spikes to %.1f%% (sustained P95: %.1f%% over %dd)",
+			input.MemoryMaxPercent, input.MemoryP95Percent, input.LookbackDays)
+	default:
 		reason = fmt.Sprintf("CPU at %.1f%% sustained utilization (P95 over %dd)",
 			input.CPUP95Percent, input.LookbackDays)
 	}

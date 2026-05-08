@@ -7,7 +7,7 @@ const LabelOwner = "rightsizing.redhatconsulting.io/owner"
 
 func DefaultPolicySpec() RightsizingPolicySpec {
 	return RightsizingPolicySpec{
-		LookbackDays: 14,
+		LookbackDays: 30,
 		Algorithm: AlgorithmSpec{
 			Percentile:      95,
 			HeadroomPercent: 20,

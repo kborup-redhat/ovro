@@ -181,7 +181,7 @@ func TestRecommendUpsize_SpikeDetection(t *testing.T) {
 		MinCPUSavings:       1,
 		MinMemorySavingsGiB: 1,
 		UpsizeThresholdPct:  90,
-		LookbackDays:        14,
+		LookbackDays:        30,
 	}
 
 	result := calculator.Analyze(input)
@@ -191,5 +191,82 @@ func TestRecommendUpsize_SpikeDetection(t *testing.T) {
 	// Max CPU 95% of 8 = 7.6 / 0.70 = 10.86 → ceil = 11
 	assert.Equal(t, int32(11), result.RecommendedCPUCores)
 	assert.Contains(t, result.Reason, "spike")
+	assert.Contains(t, result.Reason, "95.0%")
+}
+
+func TestSpikeDetection_MondayCPUSpike(t *testing.T) {
+	// Simulates a database VM that idles at ~25% CPU most of the time
+	// but spikes to 92% every Monday during batch processing.
+	// Over 30 days, P95 stays moderate because spikes are only ~6% of samples.
+	// Without spike detection this VM would NOT trigger an upsize.
+	input := calculator.AnalysisInput{
+		CurrentCPUCores:     8,
+		CurrentMemoryGiB:    16,
+		CPUP95Percent:       42.0,
+		MemoryP95Percent:    60.0,
+		CPUMaxPercent:       92.0,
+		MemoryMaxPercent:    75.0,
+		HeadroomPercent:     20,
+		MinCPUSavings:       1,
+		MinMemorySavingsGiB: 1,
+		UpsizeThresholdPct:  90,
+		LookbackDays:        30,
+	}
+
+	result := calculator.Analyze(input)
+
+	require.NotNil(t, result, "Monday spike should trigger upsize even though P95 is only 42%%")
+	assert.Equal(t, calculator.Upsize, result.Direction)
+	// Sized for max: 92% of 8 = 7.36 / 0.70 = 10.51 → ceil = 11
+	assert.Equal(t, int32(11), result.RecommendedCPUCores)
+	assert.Contains(t, result.Reason, "spike")
+	assert.Contains(t, result.Reason, "30d")
+}
+
+func TestSpikeDetection_NoSpike_NormalMax(t *testing.T) {
+	// VM with both P95 and max well below threshold — no spike, no upsize.
+	input := calculator.AnalysisInput{
+		CurrentCPUCores:     8,
+		CurrentMemoryGiB:    16,
+		CPUP95Percent:       25.0,
+		MemoryP95Percent:    40.0,
+		CPUMaxPercent:       60.0,
+		MemoryMaxPercent:    55.0,
+		HeadroomPercent:     20,
+		MinCPUSavings:       1,
+		MinMemorySavingsGiB: 1,
+		UpsizeThresholdPct:  90,
+		LookbackDays:        30,
+	}
+
+	result := calculator.Analyze(input)
+
+	// Should get a downsize, not upsize — no spike
+	require.NotNil(t, result)
+	assert.Equal(t, calculator.Downsize, result.Direction)
+	assert.NotContains(t, result.Reason, "spike")
+}
+
+func TestSpikeDetection_MemorySpike(t *testing.T) {
+	// VM with moderate CPU but memory spikes over threshold.
+	input := calculator.AnalysisInput{
+		CurrentCPUCores:     4,
+		CurrentMemoryGiB:    8,
+		CPUP95Percent:       50.0,
+		MemoryP95Percent:    55.0,
+		CPUMaxPercent:       70.0,
+		MemoryMaxPercent:    95.0,
+		HeadroomPercent:     20,
+		MinCPUSavings:       1,
+		MinMemorySavingsGiB: 1,
+		UpsizeThresholdPct:  90,
+		LookbackDays:        30,
+	}
+
+	result := calculator.Analyze(input)
+
+	require.NotNil(t, result, "Memory spike should trigger upsize")
+	assert.Equal(t, calculator.Upsize, result.Direction)
+	assert.Contains(t, result.Reason, "Memory spikes")
 	assert.Contains(t, result.Reason, "95.0%")
 }

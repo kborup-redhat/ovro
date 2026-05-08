@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: rightsizingpolicy-sample
 spec:
-  lookbackDays: 14
+  lookbackDays: 30
   algorithm:
     percentile: 95
     headroomPercent: 20

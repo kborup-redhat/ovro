@@ -3,7 +3,7 @@ kind: RightsizingPolicy
 metadata:
   name: default
 spec:
-  lookbackDays: 14
+  lookbackDays: 30
   algorithm:
     percentile: 95
     headroomPercent: 20
