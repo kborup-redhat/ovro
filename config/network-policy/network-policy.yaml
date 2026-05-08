@@ -28,3 +28,5 @@ spec:
           protocol: TCP
         - port: 9091
           protocol: TCP
+        - port: 8428
+          protocol: TCP

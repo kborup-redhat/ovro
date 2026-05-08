@@ -46,24 +46,28 @@ type VMUtilization struct {
 }
 
 // NewClient creates a new Prometheus client with the given base URL.
-// It reads the service account token for Thanos authentication.
+// For HTTPS URLs (Thanos), it uses the service account token and TLS.
+// For HTTP URLs (VictoriaMetrics), it uses plain HTTP with no auth.
 func NewClient(baseURL string) *Client {
-	var token string
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-		token = strings.TrimSpace(string(data))
-	}
-	return &Client{
-		baseURL:     baseURL,
-		bearerToken: token,
-		httpClient: &http.Client{
+	c := &Client{baseURL: baseURL}
+
+	if strings.HasPrefix(baseURL, "https://") {
+		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+			c.bearerToken = strings.TrimSpace(string(data))
+		}
+		c.httpClient = &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true, //nolint:gosec // cluster-internal Thanos endpoint
 				},
 			},
-		},
+		}
+	} else {
+		c.httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+
+	return c
 }
 
 // NewClientWithHTTPClient creates a new Prometheus client with a custom HTTP client.
@@ -181,6 +185,47 @@ func (c *Client) GetVMUtilization(ctx context.Context, vmName, namespace string,
 	}
 
 	return utilization, nil
+}
+
+// GetContainerMetrics fetches CPU and memory metrics for a specific container.
+func (c *Client) GetContainerMetrics(ctx context.Context, containerName, namespace string, lookbackDays int) (*VMMetrics, error) {
+	lookback := fmt.Sprintf("%dd", lookbackDays)
+
+	cpuSamples, err := c.QueryRange(ctx, containerCPUQuery(containerName, namespace, lookback))
+	if err != nil {
+		return nil, fmt.Errorf("querying container CPU metrics: %w", err)
+	}
+
+	memSamples, err := c.QueryRange(ctx, containerMemoryQuery(containerName, namespace, lookback))
+	if err != nil {
+		return nil, fmt.Errorf("querying container memory metrics: %w", err)
+	}
+
+	metrics := &VMMetrics{}
+	if len(cpuSamples) > 0 {
+		metrics.CPUSamples = cpuSamples[0].Values
+	}
+	if len(memSamples) > 0 {
+		metrics.MemorySamples = memSamples[0].Values
+	}
+
+	return metrics, nil
+}
+
+// GetContainerUtilization fetches container metrics and computes P95 and max utilization.
+func (c *Client) GetContainerUtilization(ctx context.Context, containerName, namespace string, lookbackDays int) (*VMUtilization, error) {
+	metrics, err := c.GetContainerMetrics(ctx, containerName, namespace, lookbackDays)
+	if err != nil {
+		return nil, fmt.Errorf("fetching container metrics: %w", err)
+	}
+
+	return &VMUtilization{
+		CPUP95Percent:    calculator.ComputePercentile(metrics.CPUSamples, 95),
+		MemoryP95Percent: calculator.ComputePercentile(metrics.MemorySamples, 95),
+		CPUMaxPercent:    maxValue(metrics.CPUSamples),
+		MemoryMaxPercent: maxValue(metrics.MemorySamples),
+		DataPoints:       len(metrics.CPUSamples),
+	}, nil
 }
 
 // maxValue returns the maximum value from a slice of float64.

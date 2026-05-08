@@ -163,8 +163,8 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&apiAddr, "api-bind-address", ":8443", "The address the REST API server binds to.")
 	flag.StringVar(&prometheusURL, "prometheus-url",
-		"https://thanos-querier.openshift-monitoring.svc:9091",
-		"The Prometheus/Thanos URL.")
+		"http://victoriametrics.ovro-system.svc:8428",
+		"The Prometheus-compatible metrics URL (VictoriaMetrics or Thanos).")
 	flag.StringVar(&approvalRouteHost, "approval-route-host", "", "Hostname of the approval proxy route")
 	flag.StringVar(&signingKeyPath, "signing-key-path", "", "Path to JWT signing key file")
 	flag.StringVar(&notificationConfigPath, "notification-config", "/etc/ovro/notifications/config.yaml",

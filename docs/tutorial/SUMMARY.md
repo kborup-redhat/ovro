@@ -11,3 +11,4 @@
 * [Notification System](08-Notification-System.md)
 * [REST API Server](09-REST-API-Server.md)
 * [Console Plugin](10-Console-Plugin.md)
+* [VictoriaMetrics Metrics Storage](11-VictoriaMetrics.md)

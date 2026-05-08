@@ -26,3 +26,17 @@ func memoryResidentQuery(vmName, namespace, lookback string) string {
 		sanitizeLabelValue(vmName), sanitizeLabelValue(namespace), lookback,
 	)
 }
+
+func containerCPUQuery(container, namespace, lookback string) string {
+	return fmt.Sprintf(
+		`rate(container_cpu_usage_seconds_total{container="%s",namespace="%s",image!=""}[5m])[%s:1m]`,
+		sanitizeLabelValue(container), sanitizeLabelValue(namespace), lookback,
+	)
+}
+
+func containerMemoryQuery(container, namespace, lookback string) string {
+	return fmt.Sprintf(
+		`container_memory_working_set_bytes{container="%s",namespace="%s",image!=""}[%s]`,
+		sanitizeLabelValue(container), sanitizeLabelValue(namespace), lookback,
+	)
+}

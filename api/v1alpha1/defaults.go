@@ -23,5 +23,9 @@ func DefaultPolicySpec() RightsizingPolicySpec {
 			Enabled:  false,
 			Schedule: "0 2 * * *",
 		},
+		MetricsStorage: MetricsStorageSpec{
+			RetentionDays: 90,
+			StorageSize:   resource.MustParse("50Gi"),
+		},
 	}
 }

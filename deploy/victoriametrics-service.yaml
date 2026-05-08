@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: ovro-system
+  labels:
+    app.kubernetes.io/name: victoriametrics
+    app.kubernetes.io/part-of: ovro
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: victoriametrics
+  ports:
+    - port: 8428
+      targetPort: http
+      protocol: TCP
+      name: http

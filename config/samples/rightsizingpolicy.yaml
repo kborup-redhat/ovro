@@ -17,3 +17,6 @@ spec:
     schedule: "0 2 * * *"
     requireApproval: true
   reconcileIntervalMinutes: 60
+  metricsStorage:
+    retentionDays: 90
+    storageSize: 50Gi

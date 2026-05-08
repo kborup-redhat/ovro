@@ -37,6 +37,11 @@ type AutoModeSpec struct {
 	Schedule string `json:"schedule"`
 }
 
+type MetricsStorageSpec struct {
+	RetentionDays int               `json:"retentionDays"`
+	StorageSize   resource.Quantity  `json:"storageSize"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 type RightsizingPolicy struct {
@@ -47,12 +52,13 @@ type RightsizingPolicy struct {
 }
 
 type RightsizingPolicySpec struct {
-	LookbackDays             int            `json:"lookbackDays"`
-	Algorithm                AlgorithmSpec  `json:"algorithm"`
-	Thresholds               ThresholdsSpec `json:"thresholds"`
-	RevertRetentionDays      int            `json:"revertRetentionDays"`
-	AutoMode                 AutoModeSpec   `json:"autoMode"`
-	ReconcileIntervalMinutes int            `json:"reconcileIntervalMinutes"`
+	LookbackDays             int                `json:"lookbackDays"`
+	Algorithm                AlgorithmSpec      `json:"algorithm"`
+	Thresholds               ThresholdsSpec     `json:"thresholds"`
+	RevertRetentionDays      int                `json:"revertRetentionDays"`
+	AutoMode                 AutoModeSpec       `json:"autoMode"`
+	ReconcileIntervalMinutes int                `json:"reconcileIntervalMinutes"`
+	MetricsStorage           MetricsStorageSpec `json:"metricsStorage"`
 }
 
 // +kubebuilder:object:root=true

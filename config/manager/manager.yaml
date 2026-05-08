@@ -63,6 +63,7 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          - --prometheus-url=http://victoriametrics.ovro-system.svc:8428
         image: controller:latest
         name: manager
         env:
